@@ -13,7 +13,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 1 | Python project skeleton and configuration | Done | Installable CLI, strict validation, and 22 tests; Ruff/mypy/pytest pass |
 | 2 | SQLite schema and persistence layer | Done | Schema v1 repository, migrations, rollback, relations, and stale queries; 34 tests pass |
 | 3 | Filesystem scanner and reconciliation | Done | Read-only fixture scans, identity moves, partial reconciliation, and 46 tests pass |
-| 4 | Metadata provider and matching | Pending | Cached Jikan integration and manual overrides pass mocked tests |
+| 4 | Metadata provider and matching | Done | Conditional Jikan cache, deterministic matching, offline mocks, and 60 tests pass |
 | 5 | Static catalogue generator | Pending | Safe, deterministic pages are generated from fixture data |
 | 6 | Service loop, signals, and observability | Pending | Scheduled and `SIGHUP` scans work; shutdown is graceful |
 | 7 | Nginx streaming configuration | Pending | Range/seek, MIME, traversal, and static-page checks pass |
@@ -177,7 +177,7 @@ behavior. Ruff, formatting, mypy, and all 46 tests pass.
 
 ## Step 4 — Metadata provider and matching
 
-**Status: Pending**
+**Status: Done**
 
 Enrich local titles while remaining functional offline.
 
@@ -206,6 +206,17 @@ Enrich local titles while remaining functional offline.
 **Documentation/commit:** document provider attribution, refresh/matching
 behavior, overrides, and limitations; mark Step 4 Done; commit as
 `feat: enrich titles with cached anime metadata`.
+
+**Delivered:** a typed provider interface and synchronous standard-library
+Jikan v4 client; one-request-per-second throttling, explicit timeouts, bounded
+retry/backoff, conditional `304` refreshes, payload and artwork limits;
+deterministic Unicode-aware confidence matching with ambiguity rejection;
+pinned/disabled sidecar behavior; schema v3 normalized provider episodes;
+transactional detail, alias, genre, relation, episode, raw-response, validator,
+and artwork persistence; missing-art markers; fresh-cache and offline
+operation; per-title errors in partial scan summaries; and an opt-in live
+smoke test. Ruff, formatting, mypy, and 60 offline tests pass; the live test is
+skipped unless explicitly enabled.
 
 ## Step 5 — Static catalogue generator
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import configparser
 import os
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from rpi_streamer.database import CatalogueRepository, ScanRun
 SIDECAR_NAME: Final = "rpi-streamer.ini"
 SIDECAR_SECTION: Final = "rpi-streamer"
 SUPPORTED_EXTENSIONS: Final = frozenset({".mp4"})
+Enricher = Callable[[CatalogueRepository, datetime], Sequence[str]]
 
 _NATURAL_PART_RE: Final = re.compile(r"(\d+)")
 _SEASON_EPISODE_RE: Final = re.compile(
@@ -219,6 +221,7 @@ def scan_library(
     media_root: Path,
     *,
     scanned_at: datetime | None = None,
+    enrich: Enricher | None = None,
 ) -> ScanRun:
     """Discover and reconcile one scan, recording success or partial status."""
 
@@ -264,14 +267,19 @@ def scan_library(
                 for entry in repository.list_library_entries(available_only=False):
                     repository.mark_unseen_media_unavailable(entry.id, timestamp)
                 repository.mark_unseen_entries_unavailable(timestamp)
-        status = "partial" if discovery.issues else "success"
-        summary = _summary(discovery.issues)
+        metadata_errors = () if enrich is None else tuple(enrich(repository, timestamp))
+        issues = (
+            *discovery.issues,
+            *(ScanIssue("metadata", error) for error in metadata_errors),
+        )
+        status = "partial" if issues else "success"
+        summary = _summary(issues)
         return repository.finish_scan(
             run.id,
             status=status,
             discovered_entries=len(discovery.titles),
             discovered_files=sum(len(title.files) for title in discovery.titles),
-            error_count=len(discovery.issues),
+            error_count=len(issues),
             summary=summary,
             finished_at=timestamp,
         )

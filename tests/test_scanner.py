@@ -202,6 +202,21 @@ class ScannerTests(unittest.TestCase):
         assert entry is not None
         self.assertTrue(entry.available)
 
+    def test_metadata_errors_are_included_in_scan_summary(self) -> None:
+        self._media("Offline/01.mp4")
+
+        result = scan_library(
+            self.repository,
+            self.root,
+            scanned_at=NOW,
+            enrich=lambda _repository, _timestamp: ("Offline: provider down",),
+        )
+
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(result.error_count, 1)
+        self.assertIn("provider down", result.summary or "")
+        self.assertTrue(self.repository.get_library_entry("Offline"))
+
     def test_scan_does_not_write_to_media_root(self) -> None:
         self._media("Read Only/01.mp4")
         before = {

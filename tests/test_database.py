@@ -12,6 +12,7 @@ from rpi_streamer.database import (
     LATEST_SCHEMA_VERSION,
     CatalogueRepository,
     DatabaseError,
+    ProviderEpisode,
     Relation,
     UnsupportedSchemaError,
     canonical_relative_path,
@@ -212,6 +213,11 @@ class DatabaseTestCase(unittest.TestCase):
             Relation("side_story", "jikan", "17205", "Ein's Summer Vacation"),
         ]
         self.repository.replace_relations(record_id, relations)
+        episodes = [
+            ProviderEpisode(1, "Asteroid Blues", NOW, False, False),
+            ProviderEpisode(2, None, None, True, False),
+        ]
+        self.repository.replace_provider_episodes(record_id, episodes)
         artwork = self.repository.upsert_artwork(
             provider_record_id=record_id,
             kind="cover",
@@ -229,14 +235,19 @@ class DatabaseTestCase(unittest.TestCase):
         )
         self.assertEqual(self.repository.list_genres(record_id), ["Action", "Sci-Fi"])
         self.assertEqual(self.repository.list_relations(record_id), relations)
+        self.assertEqual(self.repository.list_provider_episodes(record_id), episodes)
         self.assertEqual(artwork.relative_path, "artwork/jikan-1.jpg")
 
         self.repository.replace_aliases(record_id, [("short", "Bebop")])
         self.repository.replace_genres(record_id, ["Drama"])
         self.repository.replace_relations(record_id, [])
+        self.repository.replace_provider_episodes(record_id, episodes[:1])
         self.assertEqual(self.repository.list_aliases(record_id), [("short", "Bebop")])
         self.assertEqual(self.repository.list_genres(record_id), ["Drama"])
         self.assertEqual(self.repository.list_relations(record_id), [])
+        self.assertEqual(
+            self.repository.list_provider_episodes(record_id), episodes[:1]
+        )
 
     def test_failed_metadata_replacement_restores_previous_rows(self) -> None:
         record_id = self._provider_record(self._entry())

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 2
+LATEST_SCHEMA_VERSION: Final = 3
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -73,6 +73,15 @@ class Relation:
     target_provider: str
     target_provider_id: str
     target_title: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEpisode:
+    episode_number: int
+    title: str | None
+    aired_at: datetime | None
+    filler: bool
+    recap: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +266,20 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
         CREATE UNIQUE INDEX media_files_local_identity_idx
         ON media_files(local_identity)
         WHERE local_identity IS NOT NULL
+        """,
+    ),
+    3: (
+        """
+        CREATE TABLE provider_episodes (
+            provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            episode_number INTEGER NOT NULL CHECK (episode_number > 0),
+            title TEXT,
+            aired_at TEXT,
+            filler INTEGER NOT NULL DEFAULT 0 CHECK (filler IN (0, 1)),
+            recap INTEGER NOT NULL DEFAULT 0 CHECK (recap IN (0, 1)),
+            PRIMARY KEY (provider_record_id, episode_number)
+        )
         """,
     ),
 }
@@ -822,6 +845,64 @@ class CatalogueRepository:
             for row in rows
         ]
 
+    def replace_provider_episodes(
+        self,
+        provider_record_id: int,
+        episodes: Sequence[ProviderEpisode],
+    ) -> None:
+        with self.transaction():
+            self._connection.execute(
+                "DELETE FROM provider_episodes WHERE provider_record_id = ?",
+                (provider_record_id,),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO provider_episodes(
+                    provider_record_id, episode_number, title, aired_at,
+                    filler, recap
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        provider_record_id,
+                        episode.episode_number,
+                        episode.title,
+                        (
+                            None
+                            if episode.aired_at is None
+                            else _utc_text(episode.aired_at)
+                        ),
+                        int(episode.filler),
+                        int(episode.recap),
+                    )
+                    for episode in episodes
+                ),
+            )
+
+    def list_provider_episodes(self, provider_record_id: int) -> list[ProviderEpisode]:
+        rows = self._connection.execute(
+            """
+            SELECT episode_number, title, aired_at, filler, recap
+            FROM provider_episodes
+            WHERE provider_record_id = ?
+            ORDER BY episode_number
+            """,
+            (provider_record_id,),
+        ).fetchall()
+        return [
+            ProviderEpisode(
+                episode_number=int(row["episode_number"]),
+                title=None if row["title"] is None else str(row["title"]),
+                aired_at=_datetime(
+                    None if row["aired_at"] is None else str(row["aired_at"])
+                ),
+                filler=bool(row["filler"]),
+                recap=bool(row["recap"]),
+            )
+            for row in rows
+        ]
+
     def upsert_artwork(
         self,
         *,
@@ -882,6 +963,16 @@ class CatalogueRepository:
         if row is None:
             raise DatabaseError("artwork disappeared after upsert")
         return _artwork(row)
+
+    def get_artwork(self, provider_record_id: int, kind: str) -> Artwork | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM artwork
+            WHERE provider_record_id = ? AND kind = ?
+            """,
+            (provider_record_id, _required_text(kind, "artwork kind")),
+        ).fetchone()
+        return None if row is None else _artwork(row)
 
     def start_scan(self, *, started_at: datetime | None = None) -> ScanRun:
         timestamp = _utc_text(started_at)

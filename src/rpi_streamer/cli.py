@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 
 from rpi_streamer.config import (
     ConfigurationError,
@@ -12,6 +13,7 @@ from rpi_streamer.config import (
     load_settings,
 )
 from rpi_streamer.database import CatalogueRepository
+from rpi_streamer.metadata import JikanProvider, enrich_catalogue
 from rpi_streamer.scanner import scan_library
 
 EXIT_OK = 0
@@ -60,7 +62,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
     if args.command == "scan":
         with CatalogueRepository(settings.database_path) as repository:
-            result = scan_library(repository, settings.media_root)
+            enrich = None
+            if settings.metadata_provider == "jikan":
+                provider = JikanProvider()
+
+                def enrich(
+                    repository: CatalogueRepository, scanned_at: datetime
+                ) -> tuple[str, ...]:
+                    return enrich_catalogue(
+                        repository,
+                        provider,
+                        refresh_interval=settings.metadata_refresh_interval,
+                        state_dir=settings.state_dir,
+                        download_artwork=settings.download_artwork,
+                        metadata_language=settings.metadata_language,
+                        now=scanned_at,
+                    ).errors
+
+            result = scan_library(
+                repository,
+                settings.media_root,
+                enrich=enrich,
+            )
         print(
             f"scan {result.status}: {result.discovered_entries} title(s), "
             f"{result.discovered_files} file(s), {result.error_count} error(s)"

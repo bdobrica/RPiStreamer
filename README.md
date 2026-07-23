@@ -10,10 +10,11 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–3 are complete. The installable CLI,
+> **Project status:** Steps 1–4 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
-> scanner are available; metadata enrichment, page generation, and streaming
-> deployment remain planned. See [PLAN.md](PLAN.md) for tracked progress.
+> scanner with cached Jikan enrichment are available; page generation and
+> streaming deployment remain planned. See [PLAN.md](PLAN.md) for tracked
+> progress.
 
 ## Goals
 
@@ -73,13 +74,43 @@ preferred over FastAPI because the catalogue changes infrequently and requires
 no authentication or per-user state. A dynamic API can be added later without
 changing media URLs.
 
-The first implementation will use the public, read-only
+The implementation uses the public, read-only
 [Jikan REST API v4](https://docs.api.jikan.moe/) as the default metadata
 provider. Jikan is an unofficial MyAnimeList API, supports conditional
 requests, and currently documents limits of 3 requests/second and 60
-requests/minute. RPi Streamer will operate below those limits, persist fetched
-responses, honor `ETag`/`Last-Modified`, retry transient failures with backoff,
-and never make metadata availability a requirement for local playback.
+requests/minute. RPi Streamer sends at most one request per second per process,
+uses a descriptive user agent and 10-second timeout, persists fetched
+responses, honors `ETag`/`Last-Modified`, and makes at most three attempts with
+bounded backoff for `429` and transient `5xx` responses. Metadata availability
+is never required for local playback.
+
+### Metadata matching and caching
+
+New, unpinned folders are searched by their display title. Matching normalizes
+Unicode, case, punctuation, and whitespace, then scores the canonical and
+alias titles. A candidate must score at least `0.88` and lead the next result
+by at least `0.08`; otherwise the title remains visibly unmatched rather than
+being assigned speculatively. Equal top results are always ambiguous.
+
+The selected anime's title, synopsis, episode count and episode rows, aliases,
+genres, anime relations, raw diagnostic response, validators, and cover
+reference are stored in SQLite. Fresh records make no network request. Records
+older than `metadata_refresh_interval` are refreshed conditionally; a `304`
+advances the cache timestamp without replacing normalized data. Set
+`metadata_provider = none` for entirely offline scans.
+
+`metadata_language` selects the cached canonical title when Jikan provides a
+matching English (`en`/`eng`) or Japanese (`ja`/`jp`/`jpn`) alias, falling back
+to Jikan's default title. A sidecar `mal_id` bypasses search and confidence
+matching. `metadata_enabled = false` prevents all metadata requests for that
+folder.
+
+When enabled, covers are limited to HTTP(S), known image MIME types, and 5 MiB.
+They are atomically cached under `state_dir/artwork`; a failed download stores
+a missing-art marker for the renderer's future placeholder. Provider,
+payload, and artwork errors are isolated per title and included in the scan's
+`partial` summary. Previously cached metadata and all local media remain
+available.
 
 ## Expected library layout
 
@@ -292,7 +323,7 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 2 contains:
+Schema version 3 contains:
 
 | Table | Stored data |
 |---|---|
@@ -300,6 +331,7 @@ Schema version 2 contains:
 | `library_entries` | Title folders, display/sort titles, availability, and metadata overrides |
 | `media_files` | Relative MP4 paths, filesystem identity, size/mtime, episode hints, and availability |
 | `provider_records` | Normalized title details, provider IDs, cache validators, refresh time, and compact raw detail JSON |
+| `provider_episodes` | Provider episode number, title, air date, filler, and recap flags |
 | `aliases` | Provider title aliases by type |
 | `genres` / `provider_record_genres` | Case-insensitive normalized genres and title membership |
 | `relations` | Prequel, sequel, and other provider relationships |
@@ -329,8 +361,8 @@ entries unavailable rather than deleting them, preserving remote metadata and
 history. If any directory, file, or sidecar could not be read safely, the scan
 is recorded as `partial`: known-good discoveries are updated, but unseen rows
 remain available so an unreadable subtree cannot erase the previous
-catalogue. Remote calls will occur only for new, manually rematched, or stale
-titles once metadata enrichment is implemented.
+catalogue. Remote calls occur only for new, manually rematched, or stale
+titles, and failures do not discard the last cached provider record.
 
 ### Database backup and restore
 
@@ -359,6 +391,13 @@ ruff check .
 ruff format --check .
 mypy
 pytest
+```
+
+The normal test suite never contacts Jikan. An explicit, low-volume live smoke
+test is available when troubleshooting provider connectivity:
+
+```bash
+RPI_STREAMER_LIVE_JIKAN=1 pytest tests/test_metadata.py::LiveJikanSmokeTest
 ```
 
 The remaining fixtures, deployment assets, and acceptance tests are specified
