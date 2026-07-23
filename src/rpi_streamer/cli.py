@@ -13,6 +13,7 @@ from rpi_streamer.config import (
     load_settings,
 )
 from rpi_streamer.database import CatalogueRepository
+from rpi_streamer.generator import GenerationError, generate_site
 from rpi_streamer.metadata import JikanProvider, enrich_catalogue
 from rpi_streamer.scanner import scan_library
 
@@ -84,9 +85,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 settings.media_root,
                 enrich=enrich,
             )
+            try:
+                generated = generate_site(
+                    repository,
+                    site_dir=settings.site_dir,
+                    state_dir=settings.state_dir,
+                )
+            except (GenerationError, OSError) as error:
+                print(
+                    f"rpi-streamer: catalogue generation failed: {error}",
+                    file=sys.stderr,
+                )
+                return EXIT_UNAVAILABLE
         print(
             f"scan {result.status}: {result.discovered_entries} title(s), "
-            f"{result.discovered_files} file(s), {result.error_count} error(s)"
+            f"{result.discovered_files} file(s), {result.error_count} error(s); "
+            f"generated {generated.page_count} page(s)"
         )
         return EXIT_OK if result.status == "success" else EXIT_UNAVAILABLE
 

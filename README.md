@@ -10,11 +10,11 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–4 are complete. The installable CLI,
+> **Project status:** Steps 1–5 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
-> scanner with cached Jikan enrichment are available; page generation and
-> streaming deployment remain planned. See [PLAN.md](PLAN.md) for tracked
-> progress.
+> scanner with cached Jikan enrichment and atomic static catalogue generation
+> are available; service and streaming deployment remain planned. See
+> [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
 
@@ -162,20 +162,55 @@ it.
 
 ## Generated catalogue
 
-The initial UI will be server-rendered static HTML with no JavaScript
-requirement:
+The implemented UI is server-rendered static HTML with no JavaScript, frontend
+build tool, CDN, or request-time Python process:
 
 - a home page with title cards, cover images, and scan status;
 - a folder/title page with metadata and locally available MP4 episodes;
 - genre pages and links between known prequels and sequels;
-- breadcrumbs and a simple title filter;
+- semantic breadcrumbs and primary navigation;
 - an HTML5 `<video controls preload="metadata">` player;
 - graceful placeholders when metadata or artwork is unavailable.
 
-All user-controlled filenames and remote text are HTML-escaped. Media links
-are URL-encoded and rooted below `/media/`. A catalogue build is written to a
-staging directory and swapped into place only after it completes, preventing
-Nginx from serving a partially generated site.
+Only currently available local files receive players. Provider episode rows
+are shown in a separate reference table and never imply local availability.
+All user-controlled filenames and remote text are HTML-escaped. Every media
+path segment is URL-encoded and rooted below `/media/`; remote artwork URLs are
+never emitted into pages.
+
+Title pages use database-identity slugs such as
+`titles/title-00000001.html`, independent of display titles. Genre pages use a
+readable prefix plus a hash suffix to prevent normalization collisions. A
+generated tree looks like:
+
+```text
+site/
+├── index.html
+├── assets/
+│   ├── style.css
+│   └── covers/jikan-1.jpg
+├── titles/title-00000001.html
+└── genres/
+    ├── index.html
+    └── sci-fi-96dee9f018.html
+```
+
+For example, a local file is rendered as a native browser player with an
+encoded Nginx media route:
+
+```html
+<video controls preload="metadata"
+       src="/media/Cowboy%20Bebop/01%20-%20Asteroid%20Blues.mp4">
+  <p>Your browser cannot play this video.</p>
+</video>
+```
+
+Generation happens in a sibling staging directory. Required output is
+validated before the complete tree is atomically renamed to `site_dir`. On
+subsequent successful builds, the formerly published tree is retained as
+`<site_dir>.previous`. Rendering, validation, and publication failures leave
+the currently published site intact. Output bytes are deterministic when the
+catalogue and cached assets are unchanged.
 
 ## Installation for development
 
@@ -218,7 +253,7 @@ log_level = INFO
 |---|---|---|
 | `media_root` | `RPI_STREAMER_MEDIA_ROOT` | Read-only root containing the collection |
 | `state_dir` | `RPI_STREAMER_STATE_DIR` | Persistent application state |
-| `site_dir` | `RPI_STREAMER_SITE_DIR` | Generated pages and cached artwork |
+| `site_dir` | `RPI_STREAMER_SITE_DIR` | Atomically published static catalogue |
 | `database_path` | `RPI_STREAMER_DATABASE_PATH` | SQLite database file |
 | `scan_interval` | `RPI_STREAMER_SCAN_INTERVAL` | Delay between automatic scans; `0` disables them |
 | `metadata_provider` | `RPI_STREAMER_METADATA_PROVIDER` | `jikan` or `none` initially |
@@ -274,10 +309,11 @@ rpi-streamer validate-config
 ```
 
 `validate-config` and the one-shot `scan` command are operational. `scan`
-creates/migrates the configured database, reconciles the collection, prints a
-compact summary, and returns `0` for a complete scan or `3` for a partial
-scan. `serve` remains unavailable until the service-loop milestone and returns
-`3`. Argument/config errors return `2`.
+creates/migrates the configured database, reconciles and enriches the
+collection, atomically regenerates `site_dir`, prints a compact scan/page
+summary, and returns `0` for a complete scan or `3` for a partial scan or
+generation failure. `serve` remains unavailable until the service-loop
+milestone and returns `3`. Argument/config errors return `2`.
 
 For systemd, `systemctl reload rpi-streamer` will send `SIGHUP`. Scans will also
 be triggerable with `kill -HUP "$(pidof rpi-streamer)"` where appropriate.

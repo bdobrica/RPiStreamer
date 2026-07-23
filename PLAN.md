@@ -14,7 +14,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 2 | SQLite schema and persistence layer | Done | Schema v1 repository, migrations, rollback, relations, and stale queries; 34 tests pass |
 | 3 | Filesystem scanner and reconciliation | Done | Read-only fixture scans, identity moves, partial reconciliation, and 46 tests pass |
 | 4 | Metadata provider and matching | Done | Conditional Jikan cache, deterministic matching, offline mocks, and 60 tests pass |
-| 5 | Static catalogue generator | Pending | Safe, deterministic pages are generated from fixture data |
+| 5 | Static catalogue generator | Done | Escaped deterministic pages, atomic rollback, and 70 offline tests pass |
 | 6 | Service loop, signals, and observability | Pending | Scheduled and `SIGHUP` scans work; shutdown is graceful |
 | 7 | Nginx streaming configuration | Pending | Range/seek, MIME, traversal, and static-page checks pass |
 | 8 | Native packaging and systemd deployment | Pending | Clean-host install and service lifecycle are documented/tested |
@@ -220,7 +220,7 @@ skipped unless explicitly enabled.
 
 ## Step 5 — Static catalogue generator
 
-**Status: Pending**
+**Status: Done**
 
 Generate a useful, accessible catalogue from SQLite.
 
@@ -249,6 +249,18 @@ Generate a useful, accessible catalogue from SQLite.
 **Documentation/commit:** add screenshots or HTML examples and navigation
 details; mark Step 5 Done; commit as
 `feat: generate the static media catalogue`.
+
+**Delivered:** packaged standard-library templates and local responsive CSS;
+home, title, genre, relationship, breadcrumb, scan-status, local-player, and
+provider-context views; unmatched and missing-art states; stable identity
+slugs and hashed genre slugs; per-segment media URL encoding and HTML escaping;
+validated local cover copies without remote image URLs; deterministic output;
+sibling staging validation, atomic publication, retained previous builds, and
+failure cleanup/recovery; generation in the one-shot scan workflow; and
+render/security tests for complete, offline, Unicode, injection, traversal,
+slug collision, accessibility, and rollback cases. Ruff, formatting, mypy,
+and 70 offline tests pass; the opt-in live Jikan test remains skipped by
+default.
 
 ## Step 6 — Service loop, signals, and observability
 

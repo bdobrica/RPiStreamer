@@ -1033,6 +1033,17 @@ class CatalogueRepository:
             raise DatabaseError(f"scan run {scan_run_id} not found")
         return _scan_run(row)
 
+    def get_latest_scan_run(self) -> ScanRun | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM scan_runs
+            WHERE status != 'running'
+            ORDER BY started_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        return None if row is None else _scan_run(row)
+
     def _enable_wal(self) -> str:
         try:
             row = self._connection.execute("PRAGMA journal_mode = WAL").fetchone()
