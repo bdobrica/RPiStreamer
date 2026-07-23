@@ -11,6 +11,8 @@ from rpi_streamer.config import (
     configure_logging,
     load_settings,
 )
+from rpi_streamer.database import CatalogueRepository
+from rpi_streamer.scanner import scan_library
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -56,6 +58,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "validate-config":
         print(settings.to_json())
         return EXIT_OK
+    if args.command == "scan":
+        with CatalogueRepository(settings.database_path) as repository:
+            result = scan_library(repository, settings.media_root)
+        print(
+            f"scan {result.status}: {result.discovered_entries} title(s), "
+            f"{result.discovered_files} file(s), {result.error_count} error(s)"
+        )
+        return EXIT_OK if result.status == "success" else EXIT_UNAVAILABLE
 
     print(
         f"rpi-streamer: {args.command} is not available until its "

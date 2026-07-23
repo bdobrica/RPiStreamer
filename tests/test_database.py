@@ -96,11 +96,13 @@ class DatabaseTestCase(unittest.TestCase):
             relative_path="Cowboy Bebop/01 - Asteroid Blues.mp4",
             size_bytes=123456,
             mtime_ns=987654321,
+            local_identity="1:234",
             episode_hint="1",
             seen_at=NOW,
         )
 
         self.assertEqual(media.filename, "01 - Asteroid Blues.mp4")
+        self.assertEqual(media.local_identity, "1:234")
         self.assertEqual(self.repository.list_media_files(entry.id), [media])
         updated = self.repository.upsert_media_file(
             library_entry_id=entry.id,

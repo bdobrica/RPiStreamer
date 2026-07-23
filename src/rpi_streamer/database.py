@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 1
+LATEST_SCHEMA_VERSION: Final = 2
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -45,6 +45,7 @@ class MediaFile:
     filename: str
     size_bytes: int
     mtime_ns: int
+    local_identity: str | None
     episode_hint: str | None
     available: bool
     first_seen_at: datetime
@@ -247,7 +248,17 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
         """
         CREATE INDEX scan_runs_started_idx ON scan_runs(started_at DESC)
         """,
-    )
+    ),
+    2: (
+        """
+        ALTER TABLE media_files ADD COLUMN local_identity TEXT
+        """,
+        """
+        CREATE UNIQUE INDEX media_files_local_identity_idx
+        ON media_files(local_identity)
+        WHERE local_identity IS NOT NULL
+        """,
+    ),
 }
 
 
@@ -433,6 +444,25 @@ class CatalogueRepository:
         ).fetchone()
         return None if row is None else _library_entry(row)
 
+    def get_library_entry_by_id(self, library_entry_id: int) -> LibraryEntry | None:
+        row = self._connection.execute(
+            "SELECT * FROM library_entries WHERE id = ?",
+            (library_entry_id,),
+        ).fetchone()
+        return None if row is None else _library_entry(row)
+
+    def relocate_library_entry(
+        self, library_entry_id: int, *, relative_path: str
+    ) -> None:
+        """Change a safely identity-matched title folder's stored path."""
+
+        path = canonical_relative_path(relative_path)
+        with self.transaction():
+            self._connection.execute(
+                "UPDATE library_entries SET relative_path = ? WHERE id = ?",
+                (path, library_entry_id),
+            )
+
     def list_library_entries(
         self, *, available_only: bool = True
     ) -> list[LibraryEntry]:
@@ -465,6 +495,7 @@ class CatalogueRepository:
         relative_path: str,
         size_bytes: int,
         mtime_ns: int,
+        local_identity: str | None = None,
         episode_hint: str | None = None,
         seen_at: datetime | None = None,
     ) -> MediaFile:
@@ -475,20 +506,26 @@ class CatalogueRepository:
             raise ValueError("mtime_ns must be non-negative")
         timestamp = _utc_text(seen_at)
         filename = PurePosixPath(path).name
+        clean_identity = (
+            None
+            if local_identity is None
+            else _required_text(local_identity, "local_identity")
+        )
         with self.transaction():
             self._connection.execute(
                 """
                 INSERT INTO media_files(
                     library_entry_id, relative_path, filename, size_bytes,
-                    mtime_ns, episode_hint, available, first_seen_at,
+                    mtime_ns, local_identity, episode_hint, available, first_seen_at,
                     last_seen_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(relative_path) DO UPDATE SET
                     library_entry_id = excluded.library_entry_id,
                     filename = excluded.filename,
                     size_bytes = excluded.size_bytes,
                     mtime_ns = excluded.mtime_ns,
+                    local_identity = excluded.local_identity,
                     episode_hint = excluded.episode_hint,
                     available = 1,
                     last_seen_at = excluded.last_seen_at
@@ -499,6 +536,7 @@ class CatalogueRepository:
                     filename,
                     size_bytes,
                     mtime_ns,
+                    clean_identity,
                     episode_hint,
                     timestamp,
                     timestamp,
@@ -510,6 +548,36 @@ class CatalogueRepository:
         if row is None:
             raise DatabaseError("media file disappeared after upsert")
         return _media_file(row)
+
+    def get_media_file_by_identity(self, local_identity: str) -> MediaFile | None:
+        """Return the file currently associated with a filesystem identity."""
+
+        clean_identity = _required_text(local_identity, "local_identity")
+        row = self._connection.execute(
+            "SELECT * FROM media_files WHERE local_identity = ?",
+            (clean_identity,),
+        ).fetchone()
+        return None if row is None else _media_file(row)
+
+    def relocate_media_file(
+        self,
+        media_file_id: int,
+        *,
+        library_entry_id: int,
+        relative_path: str,
+    ) -> None:
+        """Move an identity-matched row before applying its current metadata."""
+
+        path = canonical_relative_path(relative_path)
+        with self.transaction():
+            self._connection.execute(
+                """
+                UPDATE media_files
+                SET library_entry_id = ?, relative_path = ?, filename = ?
+                WHERE id = ?
+                """,
+                (library_entry_id, path, PurePosixPath(path).name, media_file_id),
+            )
 
     def list_media_files(
         self,
@@ -949,6 +1017,9 @@ def _media_file(row: sqlite3.Row) -> MediaFile:
         filename=str(row["filename"]),
         size_bytes=int(row["size_bytes"]),
         mtime_ns=int(row["mtime_ns"]),
+        local_identity=(
+            None if row["local_identity"] is None else str(row["local_identity"])
+        ),
         episode_hint=(
             None if row["episode_hint"] is None else str(row["episode_hint"])
         ),

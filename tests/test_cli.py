@@ -55,14 +55,23 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual(result, EXIT_USAGE)
         self.assertIn("configuration error", stderr.getvalue())
 
-    def test_future_commands_are_explicitly_unavailable(self) -> None:
-        for command in ("scan", "serve"):
-            with self.subTest(command=command):
-                stderr = io.StringIO()
-                with (
-                    patch.dict("os.environ", {}, clear=True),
-                    contextlib.redirect_stderr(stderr),
-                ):
-                    result = main(["--config", str(self.config_path), command])
-                self.assertEqual(result, EXIT_UNAVAILABLE)
-                self.assertIn("implementation milestone", stderr.getvalue())
+    def test_scan_runs_and_prints_summary(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            contextlib.redirect_stdout(stdout),
+        ):
+            result = main(["--config", str(self.config_path), "scan"])
+
+        self.assertEqual(result, EXIT_OK)
+        self.assertIn("scan success: 0 title(s), 0 file(s)", stdout.getvalue())
+
+    def test_serve_is_explicitly_unavailable(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            contextlib.redirect_stderr(stderr),
+        ):
+            result = main(["--config", str(self.config_path), "serve"])
+        self.assertEqual(result, EXIT_UNAVAILABLE)
+        self.assertIn("implementation milestone", stderr.getvalue())

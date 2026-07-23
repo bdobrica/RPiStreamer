@@ -10,10 +10,10 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–2 are complete. The installable CLI,
-> configuration layer, and versioned SQLite repository are available;
-> filesystem scanning, page generation, and streaming deployment remain
-> planned. See [PLAN.md](PLAN.md) for tracked progress.
+> **Project status:** Steps 1–3 are complete. The installable CLI,
+> configuration layer, versioned SQLite repository, and read-only filesystem
+> scanner are available; metadata enrichment, page generation, and streaming
+> deployment remain planned. See [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
 
@@ -83,8 +83,12 @@ and never make metadata availability a requirement for local playback.
 
 ## Expected library layout
 
-The scanner treats each directory containing MP4 files as a title and sorts
-media using natural filename order.
+The scanner treats each directory containing one or more `.mp4` files as a
+title. The extension match is case-insensitive, so `.MP4` is accepted. A
+folder name is converted into its candidate title by replacing dots and
+underscores with spaces and collapsing whitespace; other punctuation is
+retained. Nested title directories are supported. Media filenames use
+case-insensitive natural order, so `2.mp4` sorts before `10.mp4`.
 
 ```text
 /mnt/anime/
@@ -97,11 +101,33 @@ media using natural filename order.
     └── S01E02.mp4
 ```
 
-Folder names are used as search hints, not unquestioned identities. Matching
-must be deterministic and reviewable. An optional per-title sidecar will allow
-the owner to pin a MyAnimeList ID, display title, sort title, or disable remote
-metadata. Files and directories outside the configured mount are never
-catalogued. Symlinks that resolve outside it will be rejected by default.
+Folder names are used as search hints, not unquestioned identities. The
+original filename remains the authoritative episode label. The scanner also
+stores conservative hints for a leading number or range, `S01E02` and episode
+ranges, and `OVA`/`OAD`/`ONA`/`Special` forms. It does not infer an episode
+number from an arbitrary number embedded in a title.
+
+An optional UTF-8 `rpi-streamer.ini` in a title directory supports:
+
+```ini
+[rpi-streamer]
+display_title = Cowboy Bebop
+sort_title = Bebop, Cowboy
+metadata_enabled = true
+mal_id = 1
+```
+
+All keys are optional. `display_title` and `sort_title` must be non-empty when
+present, `metadata_enabled` uses the same boolean forms as the main config,
+and `mal_id` must be a positive integer. A MAL pin is stored for the `jikan`
+provider. Unknown sections/keys and malformed values are reported as scan
+errors; safe folder-derived defaults are still catalogued.
+
+Directory symlinks are not traversed. File symlinks are catalogued only when
+their resolved target remains inside `media_root`; escaping links are reported
+and skipped. Duplicate links to the same filesystem object are skipped. The
+scanner only reads the media tree and never creates sidecars or other files in
+it.
 
 ## Generated catalogue
 
@@ -216,10 +242,11 @@ rpi-streamer scan
 rpi-streamer validate-config
 ```
 
-At Step 1, `validate-config` is operational. `serve` and `scan` validate their
-configuration and then return exit code `3` with an explicit unavailable
-message; their engines are implemented in later milestones. Argument/config
-errors return `2`, and successful implemented commands return `0`.
+`validate-config` and the one-shot `scan` command are operational. `scan`
+creates/migrates the configured database, reconciles the collection, prints a
+compact summary, and returns `0` for a complete scan or `3` for a partial
+scan. `serve` remains unavailable until the service-loop milestone and returns
+`3`. Argument/config errors return `2`.
 
 For systemd, `systemctl reload rpi-streamer` will send `SIGHUP`. Scans will also
 be triggerable with `kill -HUP "$(pidof rpi-streamer)"` where appropriate.
@@ -265,13 +292,13 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 1 contains:
+Schema version 2 contains:
 
 | Table | Stored data |
 |---|---|
 | `schema_migrations` | Applied forward-only schema versions and UTC timestamps |
 | `library_entries` | Title folders, display/sort titles, availability, and metadata overrides |
-| `media_files` | Relative MP4 paths, size/mtime identity, episode hints, and availability |
+| `media_files` | Relative MP4 paths, filesystem identity, size/mtime, episode hints, and availability |
 | `provider_records` | Normalized title details, provider IDs, cache validators, refresh time, and compact raw detail JSON |
 | `aliases` | Provider title aliases by type |
 | `genres` / `provider_record_genres` | Case-insensitive normalized genres and title membership |
@@ -281,9 +308,11 @@ Schema version 1 contains:
 
 Media and artwork paths are canonical relative POSIX paths. Absolute paths,
 backslashes, `.`/`..`, repeated separators, and NUL bytes are rejected.
-Persisted timestamps are timezone-aware and normalized to UTC. The initial
-version identifies files by path, size, and nanosecond modification time; it
-does not hash multi-gigabyte videos.
+Persisted timestamps are timezone-aware and normalized to UTC. Files have a
+local identity derived from the filesystem device and inode, allowing a rename
+or move on the same mounted filesystem to retain its database row and title
+metadata where the match is unambiguous. Size and nanosecond modification time
+detect content changes. Videos are not hashed.
 
 Foreign keys and a 5-second busy timeout are enabled on every repository
 connection. The repository requests WAL journal mode for normal file-backed
@@ -295,9 +324,13 @@ replacements restore the previous rows.
 
 Migrations are ordered, forward-only, idempotent, and applied transactionally.
 A database with a schema newer than the application supports is rejected
-instead of being modified. A successful future full scan will mark missing
-entries unavailable rather than immediately destroying history. Remote calls
-will occur only for new, manually rematched, or stale titles.
+instead of being modified. A successful full scan marks missing files and
+entries unavailable rather than deleting them, preserving remote metadata and
+history. If any directory, file, or sidecar could not be read safely, the scan
+is recorded as `partial`: known-good discoveries are updated, but unseen rows
+remain available so an unreadable subtree cannot erase the previous
+catalogue. Remote calls will occur only for new, manually rematched, or stale
+titles once metadata enrichment is implemented.
 
 ### Database backup and restore
 

@@ -12,7 +12,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 0 | Architecture and project plan | Done | `README.md` and `PLAN.md` define the initial design |
 | 1 | Python project skeleton and configuration | Done | Installable CLI, strict validation, and 22 tests; Ruff/mypy/pytest pass |
 | 2 | SQLite schema and persistence layer | Done | Schema v1 repository, migrations, rollback, relations, and stale queries; 34 tests pass |
-| 3 | Filesystem scanner and reconciliation | Pending | Fixture library is scanned idempotently; change tests pass |
+| 3 | Filesystem scanner and reconciliation | Done | Read-only fixture scans, identity moves, partial reconciliation, and 46 tests pass |
 | 4 | Metadata provider and matching | Pending | Cached Jikan integration and manual overrides pass mocked tests |
 | 5 | Static catalogue generator | Pending | Safe, deterministic pages are generated from fixture data |
 | 6 | Service loop, signals, and observability | Pending | Scheduled and `SIGHUP` scans work; shutdown is graceful |
@@ -135,7 +135,7 @@ cascade, replacement, rollback, relation, scan-run, and path tests.
 
 ## Step 3 — Filesystem scanner and reconciliation
 
-**Status: Pending**
+**Status: Done**
 
 Discover the local collection efficiently and safely.
 
@@ -165,6 +165,15 @@ Discover the local collection efficiently and safely.
 
 **Documentation/commit:** publish the actual naming and sidecar rules; mark
 Step 3 Done; commit as `feat: scan and reconcile media libraries`.
+
+**Delivered:** a standard-library, read-only scanner; case-insensitive MP4
+discovery; natural ordering and conservative episode hints; strict per-title
+sidecars; schema v2 filesystem identities; safe file/title move detection;
+transactional availability reconciliation; partial-scan protection and scan
+summaries; an operational one-shot `scan` CLI; and fixture/unit coverage for
+Unicode, spaces, URL-special characters, uppercase extensions, symlinks,
+malformed sidecars, idempotency, moves, changes, removals, and read-only media
+behavior. Ruff, formatting, mypy, and all 46 tests pass.
 
 ## Step 4 — Metadata provider and matching
 
