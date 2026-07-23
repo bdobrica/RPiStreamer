@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rpi_streamer.cli import EXIT_OK, EXIT_UNAVAILABLE, EXIT_USAGE, main
+from rpi_streamer.cli import EXIT_LOCKED, EXIT_OK, EXIT_UNAVAILABLE, EXIT_USAGE, main
+from rpi_streamer.service import AlreadyRunningError, RunSummary
 
 
 class CliTestCase(unittest.TestCase):
@@ -66,12 +67,42 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual(result, EXIT_OK)
         self.assertIn("scan success: 0 title(s), 0 file(s)", stdout.getvalue())
 
-    def test_serve_is_explicitly_unavailable(self) -> None:
+    def test_scan_can_print_json_summary(self) -> None:
+        stdout = io.StringIO()
+        expected = RunSummary(3, "success", 1, 2, 0, 4)
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("rpi_streamer.cli.run_once", return_value=expected),
+            contextlib.redirect_stdout(stdout),
+        ):
+            result = main(["--config", str(self.config_path), "scan", "--json"])
+        self.assertEqual(result, EXIT_OK)
+        self.assertIn('"scan_id": 3', stdout.getvalue())
+
+    def test_serve_reports_lock_contention(self) -> None:
         stderr = io.StringIO()
         with (
             patch.dict("os.environ", {}, clear=True),
+            patch(
+                "rpi_streamer.cli.Service.run",
+                side_effect=AlreadyRunningError("already running"),
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            result = main(["--config", str(self.config_path), "serve"])
+        self.assertEqual(result, EXIT_LOCKED)
+        self.assertIn("already running", stderr.getvalue())
+
+    def test_serve_reports_operational_failure(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "rpi_streamer.cli.Service.run",
+                side_effect=OSError("status unavailable"),
+            ),
             contextlib.redirect_stderr(stderr),
         ):
             result = main(["--config", str(self.config_path), "serve"])
         self.assertEqual(result, EXIT_UNAVAILABLE)
-        self.assertIn("implementation milestone", stderr.getvalue())
+        self.assertIn("service failed", stderr.getvalue())

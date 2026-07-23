@@ -15,7 +15,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 3 | Filesystem scanner and reconciliation | Done | Read-only fixture scans, identity moves, partial reconciliation, and 46 tests pass |
 | 4 | Metadata provider and matching | Done | Conditional Jikan cache, deterministic matching, offline mocks, and 60 tests pass |
 | 5 | Static catalogue generator | Done | Escaped deterministic pages, atomic rollback, and 70 offline tests pass |
-| 6 | Service loop, signals, and observability | Pending | Scheduled and `SIGHUP` scans work; shutdown is graceful |
+| 6 | Service loop, signals, and observability | Done | Monotonic scheduling, signals, locking, JSON health, and 81 offline tests pass |
 | 7 | Nginx streaming configuration | Pending | Range/seek, MIME, traversal, and static-page checks pass |
 | 8 | Native packaging and systemd deployment | Pending | Clean-host install and service lifecycle are documented/tested |
 | 9 | Container images and Compose deployment | Pending | Health checks pass on supported architectures |
@@ -264,7 +264,7 @@ default.
 
 ## Step 6 — Service loop, signals, and observability
 
-**Status: Pending**
+**Status: Done**
 
 Turn one-shot components into a reliable long-running indexer.
 
@@ -290,6 +290,19 @@ Turn one-shot components into a reliable long-running indexer.
 **Documentation/commit:** document operational commands, logs, signals, and
 failure behavior; mark Step 6 Done; commit as
 `feat: run periodic and signal-triggered scans`.
+
+**Delivered:** a shared scan/enrich/generate pipeline; immediate startup scans;
+monotonic interval scheduling with an indefinite disabled state; coalesced
+`SIGHUP` follow-ups; graceful `SIGINT`/`SIGTERM`; an advisory state-directory
+process lock shared by `serve` and `scan`; concise structured summaries and
+sanitized error logs; documented exit codes and one-shot `--json` output; and
+an atomically published `status.json` health artifact. Fake-clock, signal,
+failure recovery, lock lifecycle, status, CLI, and real subprocess
+`SIGHUP`/`SIGTERM` tests are included. Ruff, formatting, mypy, and 81 offline
+tests pass; the opt-in live Jikan test remains skipped. Idle waiting is
+event-based and consumes no polling CPU; target-Pi RSS measurement remains a
+deployment validation item because it cannot be measured on the development
+host.
 
 ## Step 7 — Nginx streaming configuration
 

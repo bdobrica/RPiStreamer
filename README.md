@@ -10,10 +10,11 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–5 are complete. The installable CLI,
+> **Project status:** Steps 1–6 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
 > scanner with cached Jikan enrichment and atomic static catalogue generation
-> are available; service and streaming deployment remain planned. See
+> are available with periodic and signal-triggered service operation; Nginx
+> streaming deployment remains planned. See
 > [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
@@ -296,9 +297,16 @@ The indexer performs a scan at startup and then waits for the configured
 interval:
 
 - `SIGHUP` requests an immediate rescan (coalesced if one is already running);
-- `SIGTERM` and `SIGINT` request a graceful shutdown;
+- if `SIGHUP` arrives during a scan, exactly one follow-up scan runs;
+- `SIGTERM` and `SIGINT` request shutdown after the active atomic scan cycle;
 - a failed scan is logged and retried later while the previous generated site
   remains available.
+
+Scheduling uses a monotonic clock, so wall-clock corrections do not cause
+unexpected scans. `scan_interval = 0` keeps the startup and signal-triggered
+scans but disables timed scans. An advisory lock at
+`state_dir/indexer.lock` prevents `serve` and one-shot `scan` processes from
+modifying the same state concurrently.
 
 The installed CLI provides the planned foreground and one-shot command names:
 
@@ -308,12 +316,23 @@ rpi-streamer scan
 rpi-streamer validate-config
 ```
 
-`validate-config` and the one-shot `scan` command are operational. `scan`
+All three commands are operational. `scan`
 creates/migrates the configured database, reconciles and enriches the
 collection, atomically regenerates `site_dir`, prints a compact scan/page
 summary, and returns `0` for a complete scan or `3` for a partial scan or
-generation failure. `serve` remains unavailable until the service-loop
-milestone and returns `3`. Argument/config errors return `2`.
+generation failure. Use `rpi-streamer scan --json` for a single-line,
+machine-readable result. `serve` runs in the foreground for systemd or a
+container. Argument/config errors return `2`; operational failures and partial
+one-shot scans return `3`; lock contention returns `4`.
+
+Service logs use concise `key=value` fields suitable for journald, including
+`event`, `scan_id`, status, title/file/error counts, and generated page count.
+Remote payloads are never logged and error values have control characters
+removed. The atomically replaced `state_dir/status.json` health artifact
+contains the PID, state (`starting`, `scanning`, `ready`, `degraded`, or
+`stopped`), update time, and the latest successful summary when applicable.
+A failed cycle publishes `degraded` and its sanitized error; a later
+successful cycle returns it to `ready`.
 
 For systemd, `systemctl reload rpi-streamer` will send `SIGHUP`. Scans will also
 be triggerable with `kill -HUP "$(pidof rpi-streamer)"` where appropriate.

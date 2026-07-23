@@ -5,21 +5,18 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import datetime
 
 from rpi_streamer.config import (
     ConfigurationError,
     configure_logging,
     load_settings,
 )
-from rpi_streamer.database import CatalogueRepository
-from rpi_streamer.generator import GenerationError, generate_site
-from rpi_streamer.metadata import JikanProvider, enrich_catalogue
-from rpi_streamer.scanner import scan_library
+from rpi_streamer.service import AlreadyRunningError, InstanceLock, Service, run_once
 
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_UNAVAILABLE = 3
+EXIT_LOCKED = 4
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,7 +36,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("serve", help="run the periodic indexing service")
-    subparsers.add_parser("scan", help="perform one scan and exit")
+    scan_parser = subparsers.add_parser("scan", help="perform one scan and exit")
+    scan_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the scan summary as one JSON object",
+    )
     subparsers.add_parser(
         "validate-config",
         help="validate and print the normalized configuration",
@@ -62,54 +64,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(settings.to_json())
         return EXIT_OK
     if args.command == "scan":
-        with CatalogueRepository(settings.database_path) as repository:
-            enrich = None
-            if settings.metadata_provider == "jikan":
-                provider = JikanProvider()
-
-                def enrich(
-                    repository: CatalogueRepository, scanned_at: datetime
-                ) -> tuple[str, ...]:
-                    return enrich_catalogue(
-                        repository,
-                        provider,
-                        refresh_interval=settings.metadata_refresh_interval,
-                        state_dir=settings.state_dir,
-                        download_artwork=settings.download_artwork,
-                        metadata_language=settings.metadata_language,
-                        now=scanned_at,
-                    ).errors
-
-            result = scan_library(
-                repository,
-                settings.media_root,
-                enrich=enrich,
+        try:
+            with InstanceLock(settings.state_dir):
+                result = run_once(settings)
+        except AlreadyRunningError as error:
+            print(f"rpi-streamer: {error}", file=sys.stderr)
+            return EXIT_LOCKED
+        except Exception as error:
+            print(f"rpi-streamer: scan failed: {error}", file=sys.stderr)
+            return EXIT_UNAVAILABLE
+        if args.json:
+            print(result.to_json())
+        else:
+            print(
+                f"scan {result.status}: {result.discovered_entries} title(s), "
+                f"{result.discovered_files} file(s), {result.error_count} error(s); "
+                f"generated {result.generated_pages} page(s)"
             )
-            try:
-                generated = generate_site(
-                    repository,
-                    site_dir=settings.site_dir,
-                    state_dir=settings.state_dir,
-                )
-            except (GenerationError, OSError) as error:
-                print(
-                    f"rpi-streamer: catalogue generation failed: {error}",
-                    file=sys.stderr,
-                )
-                return EXIT_UNAVAILABLE
-        print(
-            f"scan {result.status}: {result.discovered_entries} title(s), "
-            f"{result.discovered_files} file(s), {result.error_count} error(s); "
-            f"generated {generated.page_count} page(s)"
-        )
         return EXIT_OK if result.status == "success" else EXIT_UNAVAILABLE
+    if args.command == "serve":
+        try:
+            return Service(settings).run()
+        except AlreadyRunningError as error:
+            print(f"rpi-streamer: {error}", file=sys.stderr)
+            return EXIT_LOCKED
+        except Exception as error:
+            print(f"rpi-streamer: service failed: {error}", file=sys.stderr)
+            return EXIT_UNAVAILABLE
 
-    print(
-        f"rpi-streamer: {args.command} is not available until its "
-        "implementation milestone is complete",
-        file=sys.stderr,
-    )
-    return EXIT_UNAVAILABLE
+    return EXIT_USAGE
 
 
 if __name__ == "__main__":
