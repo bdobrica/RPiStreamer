@@ -43,28 +43,27 @@ and AAC audio provide the broadest playback support.
 
 ## Proposed architecture
 
-```text
-                        metadata requests
-                     ┌─────────────────────┐
-                     │ Jikan REST API v4  │
-                     └──────────▲──────────┘
-                                │ cached/rate-limited
-┌────────────────┐    scan      │     ┌─────────────────────┐
-│ media mount    │───────────────┼────▶│ Python indexer      │
-│ /mnt/anime     │               │     │ + static renderer   │
-└───────┬────────┘               │     └──────┬────────┬─────┘
-        │                        │            │        │
-        │ MP4 files              │      SQLite│        │ atomic HTML/images
-        │                        │            ▼        ▼
-        │                        │       /var/lib/rpi-streamer/
-        ▼                        │       ├── catalogue.db
-┌────────────────────────────────────────────┴───────────────┐
-│ Nginx                                                      │
-│ /media/... -> configured media mount                       │
-│ /          -> generated static catalogue                   │
-└───────────────────────────────┬─────────────────────────────┘
-                                ▼
-                           web browser
+```mermaid
+flowchart LR
+    browser[Web browser]
+    jikan[Jikan REST API v4]
+
+    subgraph host[RPi Streamer host]
+        media[(Media mount<br/>/mnt/anime)]
+        indexer[Python indexer<br/>and static renderer]
+        database[(SQLite<br/>catalogue.db)]
+        site[(Generated site<br/>HTML and images)]
+        nginx[Nginx<br/>media and catalogue routes]
+
+        media -->|Scan folders| indexer
+        indexer -->|Catalogue state| database
+        indexer -->|Atomic generation| site
+        media -->|MP4 files| nginx
+        site -->|Static catalogue| nginx
+    end
+
+    indexer <-->|Cached, rate-limited metadata| jikan
+    nginx -->|HTML, images, and MP4 byte ranges| browser
 ```
 
 Nginx is the data plane: it handles large files, MIME types, conditional
