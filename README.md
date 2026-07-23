@@ -10,9 +10,10 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Step 1 is complete. The installable CLI and configuration
-> layer are available; scanning, persistence, page generation, and streaming
-> deployment remain planned. See [PLAN.md](PLAN.md) for tracked progress.
+> **Project status:** Steps 1–2 are complete. The installable CLI,
+> configuration layer, and versioned SQLite repository are available;
+> filesystem scanning, page generation, and streaming deployment remain
+> planned. See [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
 
@@ -260,21 +261,66 @@ least `linux/amd64` and `linux/arm64`.
 
 ## Data and rescan behavior
 
-SQLite will track discovered titles and media files, provider identifiers and
-raw/normalized metadata, relationships, genres, artwork, scan runs, and cache
-validators. Files will be identified by normalized path plus inexpensive
-stat information; the initial version will not hash multi-gigabyte videos.
+The implemented repository uses Python's standard `sqlite3` module without an
+ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
+opens the database, applies pending migrations, and exposes typed records
+instead of requiring application code to issue SQL.
 
-A successful full scan marks missing entries unavailable rather than
-immediately destroying history. Remote calls happen only for new, manually
-rematched, or stale titles. Database migrations are versioned and transactional.
-SQLite uses foreign keys, a busy timeout, and WAL mode where the deployment
-filesystem supports it.
+Schema version 1 contains:
+
+| Table | Stored data |
+|---|---|
+| `schema_migrations` | Applied forward-only schema versions and UTC timestamps |
+| `library_entries` | Title folders, display/sort titles, availability, and metadata overrides |
+| `media_files` | Relative MP4 paths, size/mtime identity, episode hints, and availability |
+| `provider_records` | Normalized title details, provider IDs, cache validators, refresh time, and compact raw detail JSON |
+| `aliases` | Provider title aliases by type |
+| `genres` / `provider_record_genres` | Case-insensitive normalized genres and title membership |
+| `relations` | Prequel, sequel, and other provider relationships |
+| `artwork` | Source/cache paths, MIME/size details, and HTTP validators |
+| `scan_runs` | Running/completed scan status, counts, summary, and errors |
+
+Media and artwork paths are canonical relative POSIX paths. Absolute paths,
+backslashes, `.`/`..`, repeated separators, and NUL bytes are rejected.
+Persisted timestamps are timezone-aware and normalized to UTC. The initial
+version identifies files by path, size, and nanosecond modification time; it
+does not hash multi-gigabyte videos.
+
+Foreign keys and a 5-second busy timeout are enabled on every repository
+connection. The repository requests WAL journal mode for normal file-backed
+deployments and records the mode SQLite actually returns; SQLite may retain a
+safer supported mode for in-memory databases or filesystems where WAL is not
+available. Callers can wrap a full scan or metadata update in
+`repository.transaction()`. Nested write methods use savepoints, and failed
+replacements restore the previous rows.
+
+Migrations are ordered, forward-only, idempotent, and applied transactionally.
+A database with a schema newer than the application supports is rejected
+instead of being modified. A successful future full scan will mark missing
+entries unavailable rather than immediately destroying history. Remote calls
+will occur only for new, manually rematched, or stale titles.
+
+### Database backup and restore
+
+Generated HTML is disposable, but `catalogue.db` contains mapping and cached
+metadata state. For a consistent online backup, use SQLite's backup API or its
+CLI `.backup` command rather than copying only the main file while WAL is
+active:
+
+```bash
+sqlite3 /var/lib/rpi-streamer/catalogue.db \
+  ".backup '/path/to/backup/catalogue.db'"
+```
+
+Alternatively, stop the indexer before copying `catalogue.db` together with
+any present `catalogue.db-wal` and `catalogue.db-shm` files. Restore only while
+the indexer is stopped, keep a copy of the pre-restore state, and start the
+same or newer application version so migrations can run safely.
 
 ## Development checks
 
 The source uses a `src/rpi_streamer/` layout and tests live in `tests/`. Run all
-Step 1 checks from the project virtual environment:
+implemented checks from the project virtual environment:
 
 ```bash
 ruff check .

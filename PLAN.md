@@ -11,7 +11,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 |---:|---|---|---|
 | 0 | Architecture and project plan | Done | `README.md` and `PLAN.md` define the initial design |
 | 1 | Python project skeleton and configuration | Done | Installable CLI, strict validation, and 22 tests; Ruff/mypy/pytest pass |
-| 2 | SQLite schema and persistence layer | Pending | Migrations create/query a versioned catalogue; DB tests pass |
+| 2 | SQLite schema and persistence layer | Done | Schema v1 repository, migrations, rollback, relations, and stale queries; 34 tests pass |
 | 3 | Filesystem scanner and reconciliation | Pending | Fixture library is scanned idempotently; change tests pass |
 | 4 | Metadata provider and matching | Pending | Cached Jikan integration and manual overrides pass mocked tests |
 | 5 | Static catalogue generator | Pending | Safe, deterministic pages are generated from fixture data |
@@ -97,7 +97,7 @@ intentionally return an unavailable status until their implementation steps.
 
 ## Step 2 — SQLite schema and persistence layer
 
-**Status: Pending**
+**Status: Done**
 
 Build a small repository layer without adopting an ORM unless migrations prove
 unreasonably complex.
@@ -125,6 +125,13 @@ unreasonably complex.
 **Documentation/commit:** document the implemented data model and backup
 considerations; mark Step 2 Done; commit as
 `feat: add versioned SQLite catalogue`.
+
+**Delivered:** schema version 1 with normalized catalogue, media, provider,
+alias, genre, relation, artwork, and scan-run tables; an ORM-free typed
+repository; canonical relative paths and UTC timestamps; foreign keys, busy
+timeout, WAL negotiation, transactional migrations, nested savepoints,
+reconciliation and stale-cache queries; plus migration, CRUD, constraint,
+cascade, replacement, rollback, relation, scan-run, and path tests.
 
 ## Step 3 — Filesystem scanner and reconciliation
 
