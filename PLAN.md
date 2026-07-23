@@ -16,7 +16,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 4 | Metadata provider and matching | Done | Conditional Jikan cache, deterministic matching, offline mocks, and 60 tests pass |
 | 5 | Static catalogue generator | Done | Escaped deterministic pages, atomic rollback, and 70 offline tests pass |
 | 6 | Service loop, signals, and observability | Done | Monotonic scheduling, signals, locking, JSON health, and 81 offline tests pass |
-| 7 | Nginx streaming configuration | Pending | Range/seek, MIME, traversal, and static-page checks pass |
+| 7 | Nginx streaming configuration | Done | Hardened template and conditional range/seek integration suite; 82 offline tests pass |
 | 8 | Native packaging and systemd deployment | Pending | Clean-host install and service lifecycle are documented/tested |
 | 9 | Container images and Compose deployment | Pending | Health checks pass on supported architectures |
 | 10 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
@@ -306,7 +306,7 @@ host.
 
 ## Step 7 — Nginx streaming configuration
 
-**Status: Pending**
+**Status: Done**
 
 Serve catalogue assets and media efficiently without exposing other paths.
 
@@ -332,6 +332,21 @@ Serve catalogue assets and media efficiently without exposing other paths.
 
 **Documentation/commit:** add verified Nginx setup and troubleshooting; mark
 Step 7 Done; commit as `feat: serve catalogue and MP4 ranges with nginx`.
+
+**Delivered:** a three-placeholder LAN Nginx site template with correct
+root/alias trailing-slash semantics; native static byte ranges and MP4 MIME;
+sendfile, validators, bounded open-file caching, and route-specific cache
+policies; an isolated health endpoint; and denial rules for directory indexes,
+dotfiles, non-MP4 media paths, traversal, and symlinks. Generated CSS and cover
+names now contain content hashes so immutable caching is safe. The test suite
+renders and audits the template everywhere and, when Nginx is installed, runs
+`nginx -t` plus loopback HTTP checks for `200`, byte-accurate `206`,
+`Content-Range`, `416`, HEAD/conditional behavior, Unicode names, MIME, and
+boundary denial. On this development host, 82 tests pass; two Nginx integration
+methods are skipped because no Nginx binary is installed, and the existing
+opt-in live Jikan smoke test remains skipped. Exact setup, LAN/firewall
+guidance, probes, permissions, cache behavior, and troubleshooting are in the
+README.
 
 ## Step 8 — Native packaging and systemd deployment
 

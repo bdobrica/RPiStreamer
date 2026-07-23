@@ -141,7 +141,11 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("Related titles", page)
         self.assertIn(f"title-{movie_id:08x}.html", page)
         self.assertIn("Last scan:", page)
-        self.assertTrue((self.site / "assets/covers/jikan-1.jpg").is_file())
+        self.assertEqual(
+            len(tuple((self.site / "assets/covers").glob("jikan-1-*.jpg"))),
+            1,
+        )
+        self.assertEqual(len(tuple((self.site / "assets").glob("style-*.css"))), 1)
         self.assertTrue(
             (self.site / "genres" / f"{genre_slug('Sci-Fi')}.html").is_file()
         )

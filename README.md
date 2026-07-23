@@ -10,11 +10,11 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–6 are complete. The installable CLI,
+> **Project status:** Steps 1–7 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
 > scanner with cached Jikan enrichment and atomic static catalogue generation
-> are available with periodic and signal-triggered service operation; Nginx
-> streaming deployment remains planned. See
+> are available with periodic and signal-triggered service operation and an
+> Nginx configuration for static catalogue and MP4 range serving. See
 > [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
@@ -188,8 +188,9 @@ generated tree looks like:
 site/
 ├── index.html
 ├── assets/
-│   ├── style.css
-│   └── covers/jikan-1.jpg
+│   ├── style-<content-hash>.css
+│   └── covers/
+│       └── jikan-1-<content-hash>.jpg
 ├── titles/title-00000001.html
 └── genres/
     ├── index.html
@@ -212,6 +213,10 @@ subsequent successful builds, the formerly published tree is retained as
 `<site_dir>.previous`. Rendering, validation, and publication failures leave
 the currently published site intact. Output bytes are deterministic when the
 catalogue and cached assets are unchanged.
+
+CSS and validated cover images have content-derived filenames. This lets Nginx
+cache them as immutable for a year without serving stale content after a
+change. HTML retains stable URLs and is always revalidated.
 
 ## Installation for development
 
@@ -337,6 +342,70 @@ successful cycle returns it to `ready`.
 For systemd, `systemctl reload rpi-streamer` will send `SIGHUP`. Scans will also
 be triggerable with `kill -HUP "$(pidof rpi-streamer)"` where appropriate.
 
+## Nginx streaming setup
+
+The site template is
+[`deployment/nginx/rpi-streamer.conf.template`](deployment/nginx/rpi-streamer.conf.template).
+It has three placeholders:
+
+| Placeholder | Example | Meaning |
+|---|---|---|
+| `__LISTEN__` | `192.168.1.20:8080` | LAN address and TCP port |
+| `__SITE_ROOT__` | `/var/lib/rpi-streamer/site/` | Generated catalogue root, with trailing slash |
+| `__MEDIA_ROOT__` | `/mnt/anime/` | Media alias root, with trailing slash |
+
+Copy the template, replace every placeholder, and validate it before enabling
+the site. For a Debian/Raspberry Pi OS installation:
+
+```bash
+sudo cp deployment/nginx/rpi-streamer.conf.template \
+  /etc/nginx/sites-available/rpi-streamer.conf
+sudo sed -i \
+  -e 's|__LISTEN__|192.168.1.20:8080|g' \
+  -e 's|__SITE_ROOT__|/var/lib/rpi-streamer/site/|g' \
+  -e 's|__MEDIA_ROOT__|/mnt/anime/|g' \
+  /etc/nginx/sites-available/rpi-streamer.conf
+sudo ln -s /etc/nginx/sites-available/rpi-streamer.conf \
+  /etc/nginx/sites-enabled/rpi-streamer.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Choose the host's actual private-LAN address; do not use `0.0.0.0` unless a
+firewall restricts the port to trusted subnets. Do not port-forward the
+service. The Nginx worker needs read and directory-traverse permission on the
+generated site and media tree, but neither path needs to be writable by Nginx.
+The media and site paths must be absolute, and the trailing slashes shown above
+are significant for `root`/`alias` mapping.
+
+Nginx serves only `.mp4` paths below `/media/`, blocks dotfiles and directory
+listing, refuses media symlinks, and leaves byte-range handling to its normal
+static-file module. There is no `mp4` pseudo-streaming directive and no
+transcoding. HTML receives `Cache-Control: no-cache`; content-fingerprinted
+CSS/covers receive a one-year immutable policy; media is revalidated. The
+`/healthz` endpoint reports whether Nginx itself can answer requests. The
+indexer's richer state remains in `state_dir/status.json`.
+
+Useful checks after deployment are:
+
+```bash
+curl -i http://192.168.1.20:8080/healthz
+curl -I http://192.168.1.20:8080/
+curl -i -H 'Range: bytes=100-199' \
+  'http://192.168.1.20:8080/media/Cowboy%20Bebop/01.mp4'
+```
+
+The range request should return `206 Partial Content`, a `Content-Range`
+header, and exactly 100 bytes. An unsatisfiable range should return `416`.
+If catalogue pages return `404`, confirm that a successful scan has generated
+`site_dir` and that the configured path matches it. For media `403`/`404`
+responses, inspect every parent directory's traverse permission and confirm
+the file is a regular, non-symlinked MP4 under `media_root`. Use `nginx -T` to
+inspect the effective configuration. Successful delivery with failed browser
+playback usually indicates an unsupported codec rather than a range problem.
+The generated catalogue remains fully browsable when the Python indexer is
+stopped because Nginx reads only the last published static tree.
+
 ## Native deployment target
 
 Packaging will install:
@@ -350,9 +419,10 @@ Packaging will install:
 
 The service will use a dedicated unprivileged account, a writable state
 directory, a read-only media mount, systemd hardening, and journald logging.
-Nginx will receive read/traverse permission for the media tree and read
-permission for the generated site. Its configuration will bind to a
-configurable LAN address/port and expose `/media/` through `alias`.
+Nginx receives read/traverse permission for the media tree and read permission
+for the generated site. The implemented template binds to a selected LAN
+address/port and exposes only MP4 files through the `/media/` alias. Automated
+installation and service-account permission setup remain part of Step 8.
 
 This is intentionally a trusted-LAN design. Operators should use a firewall and
 must not port-forward it to the internet without adding authentication, TLS,
@@ -454,6 +524,13 @@ test is available when troubleshooting provider connectivity:
 ```bash
 RPI_STREAMER_LIVE_JIKAN=1 pytest tests/test_metadata.py::LiveJikanSmokeTest
 ```
+
+`tests/test_nginx.py` always audits the rendered template. When an `nginx`
+binary is on `PATH`, it additionally runs `nginx -t`, starts an isolated
+loopback server, and verifies catalogue availability, HEAD and conditional
+requests, Unicode MP4 URLs, `200`/`206`/`416`, byte-accurate seeking, MIME,
+cache headers, and rejection of traversal, dotfiles, symlinks, and non-media
+files.
 
 The remaining fixtures, deployment assets, and acceptance tests are specified
 in [PLAN.md](PLAN.md). The project follows this workflow for every milestone:

@@ -112,7 +112,7 @@ def _render(
     (output / "titles").mkdir()
     (output / "genres").mkdir()
     (output / "assets" / "covers").mkdir(parents=True)
-    _copy_asset("style.css", output / "assets" / "style.css")
+    style_name = _copy_versioned_asset("style.css", output / "assets")
 
     entries = repository.list_library_entries()
     views: list[TitleView] = []
@@ -148,6 +148,7 @@ def _render(
         content=index_content,
         root_prefix="",
         asset_prefix="",
+        style_name=style_name,
         scan_status=scan_status,
     )
 
@@ -159,6 +160,7 @@ def _render(
             templates,
             output / "titles" / f"{view.slug}.html",
             scan_status,
+            style_name,
         )
 
     sorted_genres = sorted(genre_members, key=str.casefold)
@@ -183,6 +185,7 @@ def _render(
         content=genres_content,
         root_prefix="../",
         asset_prefix="../",
+        style_name=style_name,
         scan_status=scan_status,
     )
     for genre in sorted_genres:
@@ -210,6 +213,7 @@ def _render(
             content=content,
             root_prefix="../",
             asset_prefix="../",
+            style_name=style_name,
             scan_status=scan_status,
         )
     return 2 + len(views) + len(sorted_genres), len(views)
@@ -222,6 +226,7 @@ def _render_title(
     templates: dict[str, Template],
     destination: Path,
     scan_status: str,
+    style_name: str,
 ) -> None:
     entry, record = view.entry, view.record
     local_files = repository.list_media_files(entry.id)
@@ -319,6 +324,7 @@ def _render_title(
         content=content,
         root_prefix="../",
         asset_prefix="../",
+        style_name=style_name,
         scan_status=scan_status,
     )
 
@@ -338,7 +344,8 @@ def _copy_cover(
     if source is None:
         return None
     suffix = source.suffix.casefold()
-    name = f"{record.provider}-{record.provider_id}{suffix}"
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+    name = f"{record.provider}-{record.provider_id}-{digest}{suffix}"
     shutil.copyfile(source, output / "assets" / "covers" / name)
     return name
 
@@ -368,6 +375,7 @@ def _write_page(
     content: str,
     root_prefix: str,
     asset_prefix: str,
+    style_name: str,
     scan_status: str,
 ) -> None:
     page = templates["base"].substitute(
@@ -375,6 +383,7 @@ def _write_page(
         content=content,
         root_prefix=root_prefix,
         asset_prefix=asset_prefix,
+        style_name=style_name,
         scan_status=scan_status,
     )
     destination.write_text(page, encoding="utf-8", newline="\n")
@@ -390,21 +399,27 @@ def _load_templates() -> dict[str, Template]:
     }
 
 
-def _copy_asset(name: str, destination: Path) -> None:
+def _copy_versioned_asset(name: str, destination: Path) -> str:
     source = resources.files("rpi_streamer").joinpath("static", name)
-    destination.write_bytes(source.read_bytes())
+    content = source.read_bytes()
+    source_name = Path(name)
+    digest = hashlib.sha256(content).hexdigest()[:16]
+    versioned_name = f"{source_name.stem}-{digest}{source_name.suffix}"
+    (destination / versioned_name).write_bytes(content)
+    return versioned_name
 
 
 def _validate(output: Path) -> None:
     required = (
         output / "index.html",
         output / "genres" / "index.html",
-        output / "assets" / "style.css",
         output / "titles",
     )
     missing = [str(path.relative_to(output)) for path in required if not path.exists()]
     if missing:
         raise GenerationError(f"generated site is missing: {', '.join(missing)}")
+    if not tuple((output / "assets").glob("style-*.css")):
+        raise GenerationError("generated site is missing: versioned stylesheet")
     if (
         not (output / "index.html")
         .read_text(encoding="utf-8")

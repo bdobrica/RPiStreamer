@@ -1,0 +1,67 @@
+# Replace the three uppercase placeholder tokens with paths and a LAN socket.
+# Keep trailing slashes on both alias paths.
+server {
+    listen __LISTEN__;
+    server_name _;
+
+    root __SITE_ROOT__;
+    index index.html;
+    autoindex off;
+    server_tokens off;
+
+    sendfile on;
+    etag on;
+    if_modified_since exact;
+    open_file_cache max=1000 inactive=60s;
+    open_file_cache_valid 120s;
+    open_file_cache_min_uses 2;
+    open_file_cache_errors on;
+
+    location = /healthz {
+        access_log off;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 200 '{"status":"ok"}\n';
+    }
+
+    # URI normalization occurs before location matching, so this also blocks
+    # percent-encoded dotfile components.
+    location ~ (^|/)\. {
+        return 404;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location = / {
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location ~ \.html$ {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Regex alias is deliberately limited to MP4 files. Standard Nginx static
+    # serving supplies Accept-Ranges, 206 responses, and 416 handling.
+    location ~* ^/media/(?<media_file>.+\.mp4)$ {
+        alias __MEDIA_ROOT__$media_file;
+        disable_symlinks on from=__MEDIA_ROOT__;
+        default_type video/mp4;
+        limit_except GET HEAD {
+            deny all;
+        }
+        add_header Cache-Control "private, max-age=0, must-revalidate" always;
+    }
+
+    location /media/ {
+        return 404;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
