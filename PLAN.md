@@ -17,7 +17,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 5 | Static catalogue generator | Done | Escaped deterministic pages, atomic rollback, and 70 offline tests pass |
 | 6 | Service loop, signals, and observability | Done | Monotonic scheduling, signals, locking, JSON health, and 81 offline tests pass |
 | 7 | Nginx streaming configuration | Done | Hardened template and conditional range/seek integration suite; 82 offline tests pass |
-| 8 | Native packaging and systemd deployment | Pending | Clean-host install and service lifecycle are documented/tested |
+| 8 | Native packaging and systemd deployment | Done | Wheel installer, hardened unit, account/state declarations, and deployment audits |
 | 9 | Container images and Compose deployment | Pending | Health checks pass on supported architectures |
 | 10 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
 
@@ -350,7 +350,7 @@ README.
 
 ## Step 8 — Native packaging and systemd deployment
 
-**Status: Pending**
+**Status: Done**
 
 Provide a reproducible Raspberry Pi/Linux installation.
 
@@ -377,6 +377,22 @@ Provide a reproducible Raspberry Pi/Linux installation.
 **Documentation/commit:** replace deployment targets with exact native install
 instructions; mark Step 8 Done; commit as
 `feat: add hardened systemd deployment`.
+
+**Delivered:** a wheel-plus-deployment-files native artifact; an idempotent
+installer that creates an isolated `/opt` virtual environment while preserving
+existing configuration; example production INI and parameterized Nginx site;
+dedicated sysusers/tmpfiles account and state declarations; and a foreground
+systemd unit with reload, restart, network ordering, journald, controlled
+shutdown, and a strict read-only filesystem sandbox whose only writable path
+is application state. Static tests audit the unit, account, state, config, and
+installer shell syntax. `systemd-analyze verify` runs conditionally; this
+development sandbox blocks its communication socket, so the test records a
+skip here. The README now gives exact Debian 12/Raspberry Pi OS Bookworm wheel
+installation, non-world-readable group permissions, lifecycle, diagnostics,
+upgrade, backup/restore, forward-migration rollback, and conservative uninstall
+procedures. Full boot/restart and permission behavior remains an operator
+acceptance check on a real systemd target because containers and this WSL
+development host do not boot systemd as PID 1.
 
 ## Step 9 — Container images and Compose deployment
 

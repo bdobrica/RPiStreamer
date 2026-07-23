@@ -10,11 +10,12 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–7 are complete. The installable CLI,
+> **Project status:** Steps 1–8 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
 > scanner with cached Jikan enrichment and atomic static catalogue generation
 > are available with periodic and signal-triggered service operation and an
-> Nginx configuration for static catalogue and MP4 range serving. See
+> Nginx configuration for static catalogue and MP4 range serving, and a
+> hardened native systemd deployment. See
 > [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
@@ -406,23 +407,143 @@ playback usually indicates an unsupported codec rather than a range problem.
 The generated catalogue remains fully browsable when the Python indexer is
 stopped because Nginx reads only the last published static tree.
 
-## Native deployment target
+## Native Debian/Raspberry Pi OS deployment
 
-Packaging will install:
+The native artifact is a Python wheel plus the versioned files under
+[`deployment/`](deployment/). The installer creates a dedicated virtual
+environment instead of modifying the OS Python installation. On a clean
+Debian 12 or Raspberry Pi OS Bookworm host, install the OS prerequisites and
+build the wheel:
+
+```bash
+sudo apt update
+sudo apt install python3 python3-venv nginx
+python3 -m venv .build-venv
+.build-venv/bin/python -m pip install --upgrade pip
+.build-venv/bin/python -m pip wheel --no-deps --wheel-dir dist .
+```
+
+Run the installer with the wheel path and the host's private-LAN listen
+address. It is intentionally not enabled automatically, so configuration and
+permissions can be checked first:
+
+```bash
+sudo deployment/install.sh dist/rpi_streamer-*.whl 192.168.1.20:8080
+sudoedit /etc/rpi-streamer/rpi-streamer.ini
+sudo -u rpi-streamer \
+  /opt/rpi-streamer/venv/bin/rpi-streamer validate-config
+sudo nginx -t
+```
+
+The installed layout is:
 
 ```text
 /etc/rpi-streamer/rpi-streamer.ini
 /etc/nginx/sites-available/rpi-streamer.conf
 /etc/systemd/system/rpi-streamer.service
+/opt/rpi-streamer/venv/
 /var/lib/rpi-streamer/
 ```
 
-The service will use a dedicated unprivileged account, a writable state
-directory, a read-only media mount, systemd hardening, and journald logging.
-Nginx receives read/traverse permission for the media tree and read permission
-for the generated site. The implemented template binds to a selected LAN
-address/port and exposes only MP4 files through the `/media/` alias. Automated
-installation and service-account permission setup remain part of Step 8.
+An existing INI is never overwritten during installation or upgrade. The
+installer creates the `rpi-streamer` system account, state directory, unit,
+Nginx site, and adds Debian's `www-data` account to the `rpi-streamer` group.
+The latter change takes effect after Nginx is restarted.
+
+### Media and generated-site permissions
+
+Both the indexer and Nginx need read permission and directory traversal on the
+media tree; neither needs write permission there. One suitable ownership model
+is a trusted administrator as owner and `rpi-streamer` as the reader group:
+
+```bash
+sudo chgrp -R rpi-streamer /mnt/anime
+sudo find /mnt/anime -type d -exec chmod 0750 '{}' +
+sudo find /mnt/anime -type f -exec chmod 0640 '{}' +
+namei -l /mnt/anime
+sudo -u rpi-streamer find /mnt/anime -type f -name '*.mp4' -print -quit
+sudo -u www-data find /mnt/anime -type f -name '*.mp4' -print -quit
+```
+
+Review these recursive permission commands before using them if the mount is
+shared with other applications. Group membership avoids making the collection
+world-readable or writable. Keep native media outside `/home`: the unit's
+`ProtectHome=true` intentionally makes home directories inaccessible. The
+whole service filesystem is read-only under `ProtectSystem=strict`, with only
+`/var/lib/rpi-streamer` admitted through `ReadWritePaths`. `StateDirectory`
+creates that path as `rpi-streamer:rpi-streamer` mode `0750`, and `UMask=0027`
+makes generated pages group-readable for Nginx.
+
+Start the services after the checks:
+
+```bash
+sudo systemctl enable --now rpi-streamer nginx
+systemctl status rpi-streamer --no-pager
+curl -i http://192.168.1.20:8080/healthz
+```
+
+Normal lifecycle and diagnostics are:
+
+```bash
+sudo systemctl start rpi-streamer
+sudo systemctl stop rpi-streamer
+sudo systemctl restart rpi-streamer
+sudo systemctl reload rpi-streamer
+sudo systemctl is-enabled rpi-streamer
+journalctl -u rpi-streamer -n 100 --no-pager
+journalctl -u rpi-streamer -f
+systemctl show rpi-streamer -p User -p Group -p ReadWritePaths
+```
+
+`reload` sends `SIGHUP` and requests a scan without interrupting the active
+one. Unexpected exits are restarted after ten seconds; deliberate stops are
+not. Startup waits for `network-online.target` so Jikan refreshes do not race
+basic network configuration. A long active scan receives up to five minutes
+to finish cleanly during shutdown.
+
+### Upgrade, backup, rollback, and uninstall
+
+Build a new wheel from the desired revision and rerun `deployment/install.sh`;
+it upgrades the isolated environment and preserves the INI. Then validate and
+restart:
+
+```bash
+sudo -u rpi-streamer \
+  /opt/rpi-streamer/venv/bin/rpi-streamer validate-config
+sudo systemctl restart rpi-streamer
+```
+
+For a consistent backup, briefly stop writes and archive the complete state
+(database, artwork, status, and last generated site):
+
+```bash
+sudo systemctl stop rpi-streamer
+sudo tar -C /var/lib -czf rpi-streamer-backup.tgz rpi-streamer
+sudo systemctl start rpi-streamer
+```
+
+To restore, stop the service, move the current state aside, extract the archive
+under `/var/lib`, restore `rpi-streamer:rpi-streamer` ownership, and start the
+service. A version rollback uses the same installer with an older wheel.
+Database migrations are forward-only, so restore the backup taken before an
+upgrade if the older version does not understand the newer schema.
+
+To uninstall the executable and service while retaining the collection and
+state:
+
+```bash
+sudo systemctl disable --now rpi-streamer
+sudo rm /etc/systemd/system/rpi-streamer.service
+sudo rm /etc/nginx/sites-enabled/rpi-streamer.conf
+sudo rm /etc/nginx/sites-available/rpi-streamer.conf
+sudo rm -r /opt/rpi-streamer
+sudo systemctl daemon-reload
+sudo systemctl reload nginx
+```
+
+`/etc/rpi-streamer`, `/var/lib/rpi-streamer`, and the system account are
+deliberately retained for recovery. Remove them only after verifying a backup.
+The media collection is never removed by the installer or these commands.
 
 This is intentionally a trusted-LAN design. Operators should use a firewall and
 must not port-forward it to the internet without adding authentication, TLS,
