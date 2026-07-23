@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from rpi_streamer.config import (
     ConfigurationError,
@@ -46,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-config",
         help="validate and print the normalized configuration",
     )
+    subparsers.add_parser(
+        "healthcheck",
+        help="check whether the long-running indexer is healthy",
+    )
     return parser
 
 
@@ -63,6 +70,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "validate-config":
         print(settings.to_json())
         return EXIT_OK
+    if args.command == "healthcheck":
+        return _healthcheck(settings.state_dir / "status.json")
     if args.command == "scan":
         try:
             with InstanceLock(settings.state_dir):
@@ -93,6 +102,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_UNAVAILABLE
 
     return EXIT_USAGE
+
+
+def _healthcheck(path: Path) -> int:
+    """Check the atomic service status and its owning process."""
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        pid = payload["pid"]
+        state = payload["state"]
+        if not isinstance(pid, int) or pid <= 0 or state not in {"ready", "scanning"}:
+            return EXIT_UNAVAILABLE
+        os.kill(pid, 0)
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return EXIT_UNAVAILABLE
+    return EXIT_OK
 
 
 if __name__ == "__main__":

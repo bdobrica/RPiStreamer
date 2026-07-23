@@ -18,7 +18,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 6 | Service loop, signals, and observability | Done | Monotonic scheduling, signals, locking, JSON health, and 81 offline tests pass |
 | 7 | Nginx streaming configuration | Done | Hardened template and conditional range/seek integration suite; 82 offline tests pass |
 | 8 | Native packaging and systemd deployment | Done | Wheel installer, hardened unit, account/state declarations, and deployment audits |
-| 9 | Container images and Compose deployment | Pending | Health checks pass on supported architectures |
+| 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
 | 10 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
 
 ## Decisions recorded
@@ -396,7 +396,7 @@ development host do not boot systemd as PID 1.
 
 ## Step 9 — Container images and Compose deployment
 
-**Status: Pending**
+**Status: Done**
 
 Package the same application/config contract for containers.
 
@@ -422,6 +422,16 @@ Package the same application/config contract for containers.
 **Documentation/commit:** add exact Compose configuration, upgrades, and volume
 ownership guidance; mark Step 9 Done; commit as
 `feat: add container deployment`.
+
+**Delivered:** pinned Python and Nginx multi-stage images with non-root runtime
+users and OCI labels; a two-service Compose stack with read-only roots/media,
+an explicit persistent state volume, tmpfs scratch space, dropped capabilities,
+health checks, signal forwarding, and environment overrides; a Buildx Bake
+definition for `linux/amd64` and `linux/arm64`; and a focused container asset
+audit. A live Docker fixture verified initial scanning, catalogue serving, MP4
+byte ranges, state persistence across restart, `SIGHUP` rescanning, read-only
+media, healthy processes, and graceful Compose lifecycle. The actual
+multi-platform push remains a registry/Buildx operator acceptance step.
 
 ## Step 10 — End-to-end hardening and first release
 

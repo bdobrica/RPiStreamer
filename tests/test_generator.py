@@ -132,6 +132,7 @@ class GeneratorTests(unittest.TestCase):
         assert entry is not None
         page = (self.site / "titles" / f"{title_slug(entry)}.html").read_text()
         self.assertEqual(result.title_count, 2)
+        self.assertEqual(self.site.stat().st_mode & 0o050, 0o050)
         self.assertIn('<video controls preload="metadata"', page)
         self.assertIn(
             "/media/Cowboy%20Bebop/01%20-%20Asteroid%20Blues%20%231.mp4", page

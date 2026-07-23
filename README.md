@@ -10,12 +10,13 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–8 are complete. The installable CLI,
+> **Project status:** Steps 1–9 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
 > scanner with cached Jikan enrichment and atomic static catalogue generation
 > are available with periodic and signal-triggered service operation and an
 > Nginx configuration for static catalogue and MP4 range serving, and a
-> hardened native systemd deployment. See
+> hardened native systemd deployment and a rootless-process Compose deployment.
+> See
 > [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
@@ -549,18 +550,112 @@ This is intentionally a trusted-LAN design. Operators should use a firewall and
 must not port-forward it to the internet without adding authentication, TLS,
 request limits, and a separate security review.
 
-## Container deployment target
+## Container deployment
 
-The planned Compose setup uses two small services:
+The Compose deployment builds two pinned, small images:
 
-- `indexer`: the Python application with the media volume mounted read-only
-  and state/site volume mounted read-write;
-- `nginx`: the generated site and media volumes mounted read-only.
+- `indexer` runs as UID/GID `10001`, scans `/media` read-only, and owns the
+  persistent `/state` volume;
+- `nginx` runs as UID `101` with the indexer's shared GID `10001`, and mounts
+  both `/media` and `/state` read-only.
 
-SQLite and generated output live in a persistent volume. Configuration is
-provided through `RPI_STREAMER_*` variables. Containers share no Docker socket
-and run without privileged mode. Multi-architecture images will target at
-least `linux/amd64` and `linux/arm64`.
+Both root filesystems are read-only, capabilities are dropped, and
+`no-new-privileges` is set. Only explicit tmpfs and state mounts are writable;
+there is no privileged mode, host namespace, or Docker socket access.
+
+Docker Engine with the Compose v2 plugin is required. Choose any readable host
+media directory and ensure directories are traversable by container users.
+Files need only be readable; they are never modified:
+
+```bash
+export RPI_STREAMER_MEDIA_PATH=/mnt/anime
+find "$RPI_STREAMER_MEDIA_PATH" -type d -exec chmod a+rx {} +
+find "$RPI_STREAMER_MEDIA_PATH" -type f -name '*.mp4' -exec chmod a+r {} +
+docker compose config --quiet
+docker compose up -d --build --wait
+curl -i http://127.0.0.1:8080/healthz
+```
+
+The defaults publish on all interfaces at port `8080`. Override the host path,
+LAN binding, and application settings in the shell or a project `.env` file:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RPI_STREAMER_MEDIA_PATH` | `./media` | Arbitrary host collection path |
+| `RPI_STREAMER_BIND_ADDRESS` | `0.0.0.0` | Host address published by Compose |
+| `RPI_STREAMER_PORT` | `8080` | Published host port |
+| `RPI_STREAMER_VERSION` | `local` | Local image tag and version label |
+| `RPI_STREAMER_SCAN_INTERVAL` | `1h` | Periodic rescan interval |
+| `RPI_STREAMER_METADATA_PROVIDER` | `jikan` | `jikan` or offline `none` |
+| `RPI_STREAMER_METADATA_REFRESH_INTERVAL` | `30d` | Metadata cache lifetime |
+| `RPI_STREAMER_METADATA_LANGUAGE` | `en` | Preferred provider language |
+| `RPI_STREAMER_DOWNLOAD_ARTWORK` | `true` | Cache cover artwork |
+| `RPI_STREAMER_LOG_LEVEL` | `INFO` | Python service log level |
+
+Container-internal media/state paths are deliberately fixed so both services
+agree; do not override them. Inspect health and logs with:
+
+```bash
+docker compose ps
+docker compose logs -f indexer nginx
+docker compose exec indexer rpi-streamer healthcheck
+```
+
+The indexer health check accepts a live service in `ready` or `scanning` state.
+Nginx checks `/healthz`. A startup grace period allows the initial metadata scan
+to finish. Send `SIGHUP` for an immediate scan; ordinary stop signals finish
+the current atomic scan before shutdown:
+
+```bash
+docker compose kill -s HUP indexer
+docker compose stop
+docker compose start
+```
+
+The named `rpi-streamer_state` volume preserves SQLite, artwork, status, and
+generated pages across restarts and image replacements. Upgrade from a clean
+checkout with `docker compose build --pull` followed by
+`docker compose up -d --wait`. Back up before upgrades because database
+migrations are forward-only:
+
+```bash
+docker compose stop indexer
+docker run --rm \
+  -v rpi-streamer_state:/state:ro \
+  -v "$PWD":/backup \
+  alpine:3.21 tar -C /state -czf /backup/rpi-streamer-state.tgz .
+docker compose start indexer
+```
+
+To restore into a new empty state volume:
+
+```bash
+docker compose down
+docker volume create rpi-streamer_state
+docker run --rm \
+  -v rpi-streamer_state:/state \
+  -v "$PWD":/backup:ro \
+  alpine:3.21 sh -c \
+  'tar -C /state -xzf /backup/rpi-streamer-state.tgz && chown -R 10001:10001 /state'
+docker compose up -d --wait
+```
+
+`docker compose down` retains the named volume; `docker compose down --volumes`
+permanently deletes catalogue state and should only be used after a verified
+backup. Media is a bind mount and is never part of that volume.
+
+For registry publication, Buildx Bake records both supported platforms and OCI
+provenance inputs:
+
+```bash
+VERSION=0.1.0 REVISION="$(git rev-parse HEAD)" \
+  CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  docker buildx bake --push
+```
+
+The targets are `linux/amd64` and `linux/arm64`. Native builds and the local
+end-to-end fixture are verified in this milestone; publishing both
+architectures requires a configured multi-platform Buildx builder and registry.
 
 ## Data and rescan behavior
 

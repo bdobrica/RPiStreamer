@@ -1,0 +1,87 @@
+name: rpi-streamer
+
+services:
+  indexer:
+    image: rpi-streamer-indexer:${RPI_STREAMER_VERSION:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${RPI_STREAMER_VERSION:-0.1.0.dev0}
+        REVISION: ${RPI_STREAMER_REVISION:-unknown}
+        CREATED: ${RPI_STREAMER_CREATED:-unknown}
+    environment:
+      RPI_STREAMER_MEDIA_ROOT: /media
+      RPI_STREAMER_STATE_DIR: /state
+      RPI_STREAMER_SITE_DIR: /state/site
+      RPI_STREAMER_DATABASE_PATH: /state/catalogue.db
+      RPI_STREAMER_SCAN_INTERVAL: ${RPI_STREAMER_SCAN_INTERVAL:-1h}
+      RPI_STREAMER_METADATA_PROVIDER: ${RPI_STREAMER_METADATA_PROVIDER:-jikan}
+      RPI_STREAMER_METADATA_REFRESH_INTERVAL: ${RPI_STREAMER_METADATA_REFRESH_INTERVAL:-30d}
+      RPI_STREAMER_METADATA_LANGUAGE: ${RPI_STREAMER_METADATA_LANGUAGE:-en}
+      RPI_STREAMER_DOWNLOAD_ARTWORK: ${RPI_STREAMER_DOWNLOAD_ARTWORK:-true}
+      RPI_STREAMER_LOG_LEVEL: ${RPI_STREAMER_LOG_LEVEL:-INFO}
+    volumes:
+      - type: bind
+        source: ${RPI_STREAMER_MEDIA_PATH:-./media}
+        target: /media
+        read_only: true
+      - type: volume
+        source: state
+        target: /state
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=0700
+    init: true
+    stop_grace_period: 5m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "rpi-streamer", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+    restart: unless-stopped
+
+  nginx:
+    image: rpi-streamer-nginx:${RPI_STREAMER_VERSION:-local}
+    build:
+      context: .
+      dockerfile: deployment/container/nginx.Dockerfile
+      args:
+        VERSION: ${RPI_STREAMER_VERSION:-0.1.0.dev0}
+        REVISION: ${RPI_STREAMER_REVISION:-unknown}
+        CREATED: ${RPI_STREAMER_CREATED:-unknown}
+    depends_on:
+      indexer:
+        condition: service_healthy
+    ports:
+      - "${RPI_STREAMER_BIND_ADDRESS:-0.0.0.0}:${RPI_STREAMER_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${RPI_STREAMER_MEDIA_PATH:-./media}
+        target: /media
+        read_only: true
+      - type: volume
+        source: state
+        target: /state
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:uid=101,gid=10001,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  state:

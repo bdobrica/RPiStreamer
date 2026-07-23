@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -106,3 +108,36 @@ class CliTestCase(unittest.TestCase):
             result = main(["--config", str(self.config_path), "serve"])
         self.assertEqual(result, EXIT_UNAVAILABLE)
         self.assertIn("service failed", stderr.getvalue())
+
+    def test_healthcheck_accepts_live_ready_service(self) -> None:
+        state = self.config_path.parent / "state"
+        state.mkdir()
+        (state / "status.json").write_text(
+            json.dumps({"pid": os.getpid(), "state": "ready"}),
+            encoding="utf-8",
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            result = main(["--config", str(self.config_path), "healthcheck"])
+        self.assertEqual(result, EXIT_OK)
+
+    def test_healthcheck_rejects_missing_malformed_or_degraded_status(self) -> None:
+        state = self.config_path.parent / "state"
+        state.mkdir()
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(
+                main(["--config", str(self.config_path), "healthcheck"]),
+                EXIT_UNAVAILABLE,
+            )
+            (state / "status.json").write_text("{", encoding="utf-8")
+            self.assertEqual(
+                main(["--config", str(self.config_path), "healthcheck"]),
+                EXIT_UNAVAILABLE,
+            )
+            (state / "status.json").write_text(
+                json.dumps({"pid": os.getpid(), "state": "degraded"}),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                main(["--config", str(self.config_path), "healthcheck"]),
+                EXIT_UNAVAILABLE,
+            )

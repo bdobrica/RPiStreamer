@@ -91,6 +91,10 @@ def generate_site(
             dir=destination.parent,
         )
     )
+    # mkdtemp deliberately creates mode 0700. The web server shares the
+    # indexer's group, so grant group traversal before the directory is
+    # atomically published.
+    staging.chmod(0o750)
     previous = destination.with_name(f"{destination.name}.previous")
     try:
         page_count, title_count = _render(repository, staging, state_dir)
