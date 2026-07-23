@@ -10,8 +10,9 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** design and implementation plan only. No runnable service
-> has been implemented yet. See [PLAN.md](PLAN.md) for the tracked roadmap.
+> **Project status:** Step 1 is complete. The installable CLI and configuration
+> layer are available; scanning, persistence, page generation, and streaming
+> deployment remain planned. See [PLAN.md](PLAN.md) for tracked progress.
 
 ## Goals
 
@@ -119,13 +120,28 @@ are URL-encoded and rooted below `/media/`. A catalogue build is written to a
 staging directory and swapped into place only after it completes, preventing
 Nginx from serving a partially generated site.
 
-## Configuration model
+## Installation for development
+
+RPi Streamer requires Python 3.11 or newer and currently has no runtime
+dependencies. From an activated virtual environment:
+
+```bash
+python -m pip install -e '.[dev]'
+rpi-streamer --help
+```
+
+The `dev` extra installs pytest, Ruff, and mypy. An editable install without
+development tools is `python -m pip install -e .`.
+
+## Configuration
 
 Native installations read `/etc/rpi-streamer/rpi-streamer.ini`. A different
-file can be selected with `RPI_STREAMER_CONFIG`. Environment variables override
-INI values, which makes the same image usable in a container.
+file can be selected with `RPI_STREAMER_CONFIG` or the higher-precedence
+`--config PATH` CLI option. Setting values use this precedence:
+environment variable, INI value, built-in default. The example file is
+[`config/rpi-streamer.ini.example`](config/rpi-streamer.ini.example).
 
-The intended initial schema is:
+The implemented schema is:
 
 ```ini
 [rpi-streamer]
@@ -154,10 +170,33 @@ log_level = INFO
 | `download_artwork` | `RPI_STREAMER_DOWNLOAD_ARTWORK` | Cache covers locally |
 | `log_level` | `RPI_STREAMER_LOG_LEVEL` | Application log verbosity |
 
-Durations will accept documented suffixes such as `s`, `m`, `h`, and `d`.
-Startup validation will reject missing roots, relative paths, invalid values,
-and conflicting state/site paths. Secrets are not required by the default
-provider.
+Durations accept a non-negative integer with an optional `s`, `m`, `h`, or `d`
+suffix; a bare integer is seconds. Boolean values accept
+`1/0`, `true/false`, `yes/no`, and `on/off`, case-insensitively.
+
+Configuration validation currently enforces:
+
+- an existing, readable, absolute media root;
+- absolute, distinct state/site/database paths with writable existing
+  ancestors;
+- state, site, and database paths outside the media root;
+- `jikan` or `none` as the metadata provider;
+- a positive metadata refresh interval and a non-negative scan interval;
+- a short language identifier and a standard Python log level;
+- known INI sections and keys, so misspellings fail at startup.
+
+An explicitly selected config file must exist. The default file is optional,
+allowing environment-only container configuration. `validate-config` emits the
+normalized configuration as sorted JSON and returns exit code `2` for a
+configuration error:
+
+```bash
+rpi-streamer --config ./config/rpi-streamer.ini.example validate-config
+RPI_STREAMER_CONFIG=/path/to/rpi-streamer.ini rpi-streamer validate-config
+```
+
+The current settings contain no secrets; diagnostic output is designed to
+remain safe if secret settings are introduced later.
 
 ## Process lifecycle
 
@@ -169,14 +208,18 @@ interval:
 - a failed scan is logged and retried later while the previous generated site
   remains available.
 
-The CLI is expected to provide foreground service operation plus one-shot
-commands useful for testing and administration:
+The installed CLI provides the planned foreground and one-shot command names:
 
 ```text
 rpi-streamer serve
 rpi-streamer scan
 rpi-streamer validate-config
 ```
+
+At Step 1, `validate-config` is operational. `serve` and `scan` validate their
+configuration and then return exit code `3` with an explicit unavailable
+message; their engines are implemented in later milestones. Argument/config
+errors return `2`, and successful implemented commands return `0`.
 
 For systemd, `systemctl reload rpi-streamer` will send `SIGHUP`. Scans will also
 be triggerable with `kill -HUP "$(pidof rpi-streamer)"` where appropriate.
@@ -228,11 +271,20 @@ rematched, or stale titles. Database migrations are versioned and transactional.
 SQLite uses foreign keys, a busy timeout, and WAL mode where the deployment
 filesystem supports it.
 
-## Development
+## Development checks
 
-The concrete package layout, quality gates, fixtures, deployment assets, and
-acceptance tests are specified in [PLAN.md](PLAN.md). The project will follow
-this workflow for every implementation milestone:
+The source uses a `src/rpi_streamer/` layout and tests live in `tests/`. Run all
+Step 1 checks from the project virtual environment:
+
+```bash
+ruff check .
+ruff format --check .
+mypy
+pytest
+```
+
+The remaining fixtures, deployment assets, and acceptance tests are specified
+in [PLAN.md](PLAN.md). The project follows this workflow for every milestone:
 
 1. implement one tracked step and its tests;
 2. run the checks appropriate to that step;

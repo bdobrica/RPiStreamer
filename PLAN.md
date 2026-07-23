@@ -10,7 +10,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | Step | Milestone | Status | Completion evidence |
 |---:|---|---|---|
 | 0 | Architecture and project plan | Done | `README.md` and `PLAN.md` define the initial design |
-| 1 | Python project skeleton and configuration | Pending | CLI loads validated INI/env configuration; unit tests pass |
+| 1 | Python project skeleton and configuration | Done | Installable CLI, strict validation, and 22 tests; Ruff/mypy/pytest pass |
 | 2 | SQLite schema and persistence layer | Pending | Migrations create/query a versioned catalogue; DB tests pass |
 | 3 | Filesystem scanner and reconciliation | Pending | Fixture library is scanned idempotently; change tests pass |
 | 4 | Metadata provider and matching | Pending | Cached Jikan integration and manual overrides pass mocked tests |
@@ -56,7 +56,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 
 ## Step 1 — Python project skeleton and configuration
 
-**Status: Pending**
+**Status: Done**
 
 Create the installable application and stable configuration surface.
 
@@ -87,6 +87,13 @@ Create the installable application and stable configuration surface.
 **Documentation/commit:** replace proposed configuration language in the
 README with verified usage; mark Step 1 Done; commit as
 `feat: scaffold application and configuration`.
+
+**Delivered:** a Python 3.11+ `src/` package with no runtime dependencies;
+editable packaging and the `rpi-streamer` console script; typed INI/environment
+settings; `serve`, `scan`, and `validate-config` command surfaces; normalized
+JSON validation output and exit codes; an example INI; Ruff, mypy, and pytest
+configuration; and table-driven configuration/CLI tests. `serve` and `scan`
+intentionally return an unavailable status until their implementation steps.
 
 ## Step 2 — SQLite schema and persistence layer
 
