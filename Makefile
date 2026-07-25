@@ -45,8 +45,20 @@ install: build
 backup:
 	sudo "$(CURDIR)/deployment/backup.sh" "$(BACKUP_DIR)"
 
-update: backup build
+update:
 	set -eu
+	was_active=false
+	if systemctl is-active --quiet rpi-streamer; then
+		sudo systemctl stop rpi-streamer
+		was_active=true
+	fi
+	trap 'if [ "$$was_active" = true ]; then sudo systemctl start rpi-streamer; fi' \
+		EXIT HUP INT TERM
+	sudo "$(CURDIR)/deployment/backup.sh" "$(BACKUP_DIR)"
+	mkdir -p "$(DIST_DIR)"
+	rm -f "$(DIST_DIR)"/rpi_streamer-*.whl
+	"$(PYTHON)" -m pip wheel --no-deps \
+		--wheel-dir "$(DIST_DIR)" "$(CURDIR)"
 	set -- "$(DIST_DIR)"/rpi_streamer-*.whl
 	wheel=$$1
 	test -f "$$wheel"
@@ -80,8 +92,12 @@ update: backup build
 	fi
 	sudo "$(CURDIR)/deployment/install.sh" \
 		"$$wheel" "$$listen" "$$service_executable" "$(MEDIA_ROOT)"
-	sudo systemctl restart rpi-streamer
+	if [ "$$was_active" = true ]; then
+		sudo systemctl start rpi-streamer
+		was_active=false
+	fi
 	sudo systemctl reload nginx
+	trap - EXIT HUP INT TERM
 
 validate:
 	"$(SERVICE_EXECUTABLE)" --config /etc/rpi-streamer/rpi-streamer.ini validate-config

@@ -77,7 +77,10 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn("installed_executable", text)
         self.assertIn("installed_listen", text)
         self.assertIn('sudo "$$service_python" -m pip install', text)
+        self.assertIn("systemctl stop rpi-streamer", text)
+        self.assertIn("trap 'if", text)
         self.assertNotIn("update: backup install", text)
+        self.assertNotIn("update: backup build", text)
         self.assertIn("MEDIA_ROOT ?= /mnt/anime", text)
         for target in (
             "help:",

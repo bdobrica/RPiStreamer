@@ -71,6 +71,13 @@ def run_once(settings: Settings) -> RunSummary:
                 ).errors
 
         result = scan_library(repository, settings.media_root, enrich=enrich)
+        if result.summary:
+            LOGGER.warning(
+                "event=scan_issues scan_id=%d errors=%d details=%s",
+                result.id,
+                result.error_count,
+                _safe_log_value(result.summary),
+            )
         generated = generate_site(
             repository,
             site_dir=settings.site_dir,

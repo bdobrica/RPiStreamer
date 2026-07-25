@@ -20,6 +20,7 @@ from rpi_streamer.service import (
     InstanceLock,
     RunSummary,
     Service,
+    run_once,
     write_json_atomic,
 )
 
@@ -194,6 +195,24 @@ class ServiceTestCase(unittest.TestCase):
         write_json_atomic(target, {"state": "ready", "pid": 12})
         self.assertEqual(json.loads(target.read_text())["state"], "ready")
         self.assertEqual(list(target.parent.glob(f".{STATUS_NAME}.*")), [])
+
+    def test_run_once_logs_sanitized_scan_issue_details(self) -> None:
+        title = self.settings.media_root / "Broken"
+        title.mkdir()
+        (title / "01.mp4").write_bytes(b"video")
+        (title / "rpi-streamer.ini").write_text(
+            "[rpi-streamer]\nunknown = bad\nline",
+            encoding="utf-8",
+        )
+
+        with self.assertLogs("rpi_streamer.service", level="WARNING") as captured:
+            result = run_once(self.settings)
+
+        self.assertEqual((result.status, result.error_count), ("partial", 1))
+        message = "\n".join(captured.output)
+        self.assertIn("event=scan_issues", message)
+        self.assertIn("invalid sidecar", message)
+        self.assertNotIn("\nline", message)
 
     def test_request_stop_wakes_waiter(self) -> None:
         event = threading.Event()

@@ -684,7 +684,12 @@ does not weaken home-directory permissions. A follow-up arm64 attempt confirmed
 the installed `/opt/rpi-streamer/venv` was discovered, then exposed that this
 legacy environment is root-owned; update installation into the discovered
 production interpreter now runs through `sudo` while wheel construction
-remains unprivileged.
+remains unprivileged. The journal then revealed a transient `episode_script`
+generation failure caused by the backup helper restarting the indexer before
+the package update finished. The update is now one failure-safe transaction:
+it preserves prior active state, stops the indexer across backup/build/install,
+and restarts it via a shell trap on failure. Partial scans also log their
+bounded, sanitized issue summary instead of reporting only an error count.
 
 ## Cross-cutting quality rules
 

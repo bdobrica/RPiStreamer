@@ -357,6 +357,8 @@ one-shot scans return `3`; lock contention returns `4`.
 
 Service logs use concise `key=value` fields suitable for journald, including
 `event`, `scan_id`, status, title/file/error counts, and generated page count.
+Partial scans additionally emit `event=scan_issues` with a bounded, sanitized
+summary identifying unreadable paths, invalid sidecars, and metadata failures.
 Remote payloads are never logged and error values have control characters
 removed. The atomically replaced `state_dir/status.json` health artifact
 contains the PID, state (`starting`, `scanning`, `ready`, `degraded`, or
@@ -539,6 +541,13 @@ environment runs through `sudo`:
 make update
 make validate PYTHON=/opt/rpi-streamer-env/bin/python
 ```
+
+If the indexer is running, the update stops it before backup and keeps it
+stopped throughout wheel construction, package replacement, unit/Nginx
+installation, and validation. A shell trap restarts it after any failed update;
+a successful update starts it only if it was running beforehand. This avoids
+loading Python code and packaged templates from different versions during an
+in-place upgrade.
 
 Use `SERVICE_EXECUTABLE=/absolute/path/bin/rpi-streamer` to intentionally move
 or override the installed environment, and `LISTEN=HOST:PORT` to intentionally
