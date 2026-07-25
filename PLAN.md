@@ -21,6 +21,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
 | 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
 | 11 | End-to-end hardening and first release | In progress | Release-candidate automation/docs complete; Raspberry Pi and amd64 host acceptance pending |
+| 12 | Optional GPT-5.6 Luna inference fallback | Pending | Credentialed, bounded, cached structured inference for unresolved titles and episode numbers |
 
 ## Decisions recorded
 
@@ -53,7 +54,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
     resolve the active Python interpreter and allow an explicit override; they
     must not assume a virtual-environment name. The service executable remains
     explicit and is validated for access by the system account.
-12. **Model-assisted inference stays optional.** A future OpenAI fallback may
+12. **Model-assisted inference stays optional.** The OpenAI fallback may
     propose normalized titles or search hints after deterministic matching
     fails, but must use structured output, bounded calls, cached results, and a
     protected environment/credential secret. It may not silently override a
@@ -638,8 +639,8 @@ Close cross-component gaps and prepare a maintainable first release.
 - Establish semantic versioning, changelog, support matrix, contribution guide,
   and release checklist.
 - Record known limitations and deferred features (dynamic API, search index,
-  optional model-assisted title inference, other metadata providers, non-MP4
-  formats).
+  the planned Step 12 model-assisted inference, other metadata providers,
+  non-MP4 formats).
 
 **Tests and acceptance**
 
@@ -690,6 +691,125 @@ the package update finished. The update is now one failure-safe transaction:
 it preserves prior active state, stops the indexer across backup/build/install,
 and restarts it via a shell trap on failure. Partial scans also log their
 bounded, sanitized issue summary instead of reporting only an error count.
+
+## Step 12 — Optional GPT-5.6 Luna inference fallback
+
+**Status: Pending**
+
+Add an opt-in, low-volume OpenAI fallback for local names that deterministic
+parsing or Jikan matching cannot resolve. The feature must remain an enrichment
+aid: scanning, streaming, static generation, and manual `mal_id` pins continue
+to work without an OpenAI account or network access.
+
+### 12.1 — Configuration and credential boundary
+
+- Add disabled-by-default settings for model-assisted inference, with
+  `gpt-5.6-luna` as the initial model, explicit request timeout, per-scan call
+  limit, and an optional cache lifetime.
+- Accept the API key from `OPENAI_API_KEY` or a dedicated protected environment
+  variable. Do not write it to SQLite, generated HTML, logs, backups, container
+  images, or the ordinary `rpi-streamer.ini`.
+- For systemd, document a root-owned `0600` credential/environment file outside
+  the normal configuration backup and load it without exposing the value in the
+  unit. For Compose, use a runtime secret or externally supplied environment
+  value rather than committing it to `.env`.
+- Validate the complete opt-in configuration at startup. When inference is
+  disabled, do not require the OpenAI package or an API key.
+
+### 12.2 — Structured inference client
+
+- Implement the client behind a small provider-neutral interface so metadata
+  and scanner tests can use a fake implementation and a future model can be
+  substituted without changing reconciliation logic.
+- Use the OpenAI Responses API with strict structured output. Reject prose,
+  missing fields, unexpected fields, invalid episode values, oversized output,
+  and schema-version mismatches.
+- Send only the minimum required local data: the unresolved directory name and
+  bounded MP4 basenames. Never upload MP4 contents, absolute paths, sidecar
+  contents, the database, or existing metadata records.
+- Use a fixed, versioned prompt that asks for normalized anime title/search
+  hints, confidence and a brief machine-safe reason, plus per-file episode
+  hints. Set deterministic request parameters where supported and keep the
+  output/token budget small.
+- Bound retries, exponential backoff, total calls per scan, filenames per
+  request, input lengths, and concurrent requests. Treat authentication,
+  quota, timeout, rate-limit, network, refusal, and malformed-output failures as
+  non-fatal enrichment errors.
+
+### 12.3 — Title matching integration
+
+- Preserve the resolution order: explicit `mal_id` pin, valid cached provider
+  match, deterministic Jikan matching and its bounded retry, then model-assisted
+  title normalization.
+- Use inferred titles only as bounded Jikan search queries and pass returned
+  candidates through the existing deterministic confidence and ambiguity
+  checks. Never store or trust a model-produced MAL ID as verified metadata.
+- Record whether a match used a model search hint, including model/schema
+  version and confidence, without logging prompts, API keys, complete responses,
+  or unsafe filename text.
+- Keep an unmatched title unmatched when the model is uncertain, Jikan is
+  unavailable, or deterministic candidate validation rejects the result.
+  Manual sidecar pins always remain authoritative.
+
+### 12.4 — Episode-number integration
+
+- Run the existing conservative filename parser first. Ask the model only about
+  files whose episode hint is missing or ambiguous, batching them by title
+  within configured bounds.
+- Define structured episode results that distinguish regular episodes, season
+  and episode pairs, ranges, specials, OVAs, openings/endings, movies, and
+  unknown values. Validate positive numeric bounds and require every result to
+  refer to an exact submitted basename.
+- Store inferred hints separately from deterministic filename hints, with
+  provenance and confidence. Rendering may prefer a validated inference for
+  display and natural ordering, but the original filename and media URL remain
+  authoritative.
+- Recompute an inference when the basename/file identity, prompt schema, or
+  configured model changes. Do not repeatedly call the API for unchanged files.
+
+### 12.5 — Cache, observability, and operator controls
+
+- Add a SQLite migration for inference inputs, normalized structured results,
+  model and prompt-schema versions, timestamps, provenance, and terminal
+  outcome. Key entries by a privacy-preserving digest of the bounded input and
+  inference version.
+- Cache successful results and stable negative/uncertain results. Allow
+  transient failures to retry on a later scan with cooldown, and provide a
+  command to inspect status or invalidate inference cache without deleting
+  catalogue/provider metadata.
+- Add bounded metrics/log fields for calls attempted, cache hits, resolved
+  titles, inferred episode hints, rejected outputs, and provider failures.
+  Redact credentials and sanitize all model-derived text.
+- Make `SIGHUP` reuse valid cached inference by default. Provide an explicit
+  CLI option for a forced inference refresh rather than turning every forced
+  filesystem rescan into paid API traffic.
+
+**Tests and acceptance**
+
+- Offline unit tests cover configuration precedence, secret redaction, exact
+  structured schemas, prompt/input bounds, cache invalidation, call budgets,
+  retries, malformed/refused output, and every non-fatal provider failure.
+- Matching tests prove deterministic matches and `mal_id` pins make zero model
+  calls; the reported Okinawa folder resolves through an inferred search hint
+  only when deterministic matching fails, and the resulting Jikan candidate
+  still passes normal confidence checks.
+- Episode tests cover common release prefixes, Unicode names, `S01E02`, bare
+  numbers, specials/OVAs, ranges, misleading years/resolutions, unknown files,
+  stable ordering, and unchanged-file cache hits.
+- End-to-end tests use fake OpenAI and Jikan transports and remain network-free.
+  An opt-in live test may run only when an explicit test flag and API key are
+  present.
+- With inference disabled, application behavior, dependency footprint, scan
+  timing, and generated output remain compatible with Step 11.
+- Raspberry Pi acceptance records cold and cached scan time, peak RSS, request
+  count, and approximate API usage for a representative unmatched collection.
+
+**Documentation/commit:** document privacy implications, cost controls, secret
+installation, configuration precedence, cache management, failure behavior,
+and examples for native and container deployments. Update the README and this
+table after each implemented substep; mark Step 12 Done only after offline and
+Raspberry Pi acceptance; commit the completed feature as
+`feat: add optional model-assisted inference`.
 
 ## Cross-cutting quality rules
 
