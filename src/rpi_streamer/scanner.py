@@ -131,6 +131,7 @@ def discover(media_root: Path) -> Discovery:
                 name
                 for name in directory_names
                 if not (directory_path / name).is_symlink()
+                and not (directory_path == root and name == "lost+found")
             ),
             key=natural_key,
         )

@@ -159,13 +159,15 @@ number from an arbitrary number embedded in a title.
 
 ### Optional OpenAI fallback
 
-Set `openai_fallback_enabled = true` to use `gpt-5.6-luna` only after a
-new title fails the pinned, cached, and deterministic Jikan matching paths.
-The model returns a strict, versioned JSON object containing a normalized
-search title and conservative episode hints. The normalized title is only a
-new Jikan search query: its candidate must still pass the existing score and
-ambiguity checks, and a model-produced MAL ID is never accepted. A manual
-`mal_id` remains authoritative.
+Set `openai_fallback_enabled = true` to use `gpt-5.6-luna` for two bounded
+jobs. Title normalization runs only after a new title fails the pinned,
+cached, and deterministic Jikan matching paths. Episode inference runs
+independently whenever filenames have no deterministic episode hint, including
+for pinned and already cached titles. The model returns one strict, versioned
+JSON object containing a normalized search title and conservative episode
+hints. A normalized title is only a new Jikan search query: its candidate must
+still pass the existing score and ambiguity checks, and a model-produced MAL
+ID is never accepted. A manual `mal_id` remains authoritative.
 
 Only the relative title-directory name and at most 50 unresolved MP4 basenames
 are sent to OpenAI. MP4 contents, absolute paths, sidecars, SQLite data,
@@ -199,7 +201,10 @@ and `mal_id` must be a positive integer. A MAL pin is stored for the `jikan`
 provider. Unknown sections/keys and malformed values are reported as scan
 errors; safe folder-derived defaults are still catalogued.
 
-Directory symlinks are not traversed. File symlinks are catalogued only when
+The conventional `lost+found` directory is ignored only when it is directly
+under `media_root`, preventing an ext filesystem recovery directory from
+making every scan partial. A nested directory with that name is treated
+normally. Directory symlinks are not traversed. File symlinks are catalogued only when
 their resolved target remains inside `media_root`; escaping links are reported
 and skipped. Duplicate links to the same filesystem object are skipped. The
 scanner only reads the media tree and never creates sidecars or other files in

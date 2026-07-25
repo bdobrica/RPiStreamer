@@ -443,6 +443,70 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(provider.search_calls, [])
         self.assertEqual(provider.detail_calls[0][0], "99")
 
+    def test_pinned_title_infers_episodes_before_jikan_detail_failure(self) -> None:
+        entry_id = self._entry("Pinned show", pinned="55842")
+        self.repository.upsert_media_file(
+            library_entry_id=entry_id,
+            relative_path="Pinned show/release_show_01.mp4",
+            size_bytes=1,
+            mtime_ns=1,
+            episode_hint=None,
+            seen_at=NOW,
+        )
+        provider = FakeProvider()
+        provider.error = ProviderError("Jikan detail returned HTTP 504")
+        structured = {
+            "schema_version": SCHEMA_VERSION,
+            "title_hint": "Pinned show",
+            "confidence": 0.9,
+            "reason": "Filename contains a release episode suffix.",
+            "episodes": [
+                {
+                    "filename": "release_show_01.mp4",
+                    "hint": "E1",
+                    "confidence": 0.95,
+                }
+            ],
+        }
+        calls: list[int] = []
+
+        def transport(_request: object, _timeout: float) -> bytes:
+            calls.append(1)
+            return json.dumps(
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(structured),
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ).encode()
+
+        inference = OpenAIInferenceClient("secret", transport=transport)
+        result = enrich_catalogue(
+            self.repository,
+            provider,
+            refresh_interval=86400,
+            state_dir=self.root,
+            download_artwork=False,
+            inference=inference,
+            now=NOW,
+        )
+
+        self.assertEqual(calls, [1])
+        self.assertEqual(provider.search_calls, [])
+        self.assertIn("HTTP 504", result.errors[0])
+        media = self.repository.list_media_files(entry_id)[0]
+        self.assertEqual(media.inferred_episode_hint, "E1")
+        self.assertEqual(media.inference_confidence, 0.95)
+
     def test_long_title_uses_one_bounded_prefix_fallback(self) -> None:
         title = "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugi"
         self._entry(title)

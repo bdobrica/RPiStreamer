@@ -131,6 +131,18 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(result.issues[0].path, "Nope")
         self.assertIn("Permission denied", result.issues[0].message)
 
+    def test_root_lost_found_is_ignored_but_nested_name_is_not_special(self) -> None:
+        self._media("lost+found/recovered/01.mp4")
+        self._media("Collection/lost+found/02.mp4")
+
+        result = discover(self.root)
+
+        self.assertEqual(
+            [title.relative_path for title in result.titles],
+            ["Collection/lost+found"],
+        )
+        self.assertEqual(result.issues, ())
+
     def test_successful_scans_reconcile_change_move_and_remove(self) -> None:
         first = self._media("Old Name/01.mp4", b"one")
         initial = scan_library(self.repository, self.root, scanned_at=NOW)

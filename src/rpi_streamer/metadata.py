@@ -426,6 +426,14 @@ def enrich_catalogue(
             continue
         record = repository.get_provider_record(entry.id, provider.name)
         if record is not None and record.fetched_at >= stale_before:
+            _infer_episodes_nonfatal(
+                repository,
+                entry,
+                inference,
+                inference_cache_ttl,
+                timestamp,
+                errors,
+            )
             cached += 1
             continue
         try:
@@ -441,6 +449,14 @@ def enrich_catalogue(
             if provider_id is None:
                 unmatched += 1
                 continue
+            _infer_episodes_nonfatal(
+                repository,
+                entry,
+                inference,
+                inference_cache_ttl,
+                timestamp,
+                errors,
+            )
             validators = (
                 None
                 if record is None or record.provider_id != provider_id
@@ -480,6 +496,39 @@ def enrich_catalogue(
         except (ProviderError, ValueError, OSError, sqlite3.Error) as error:
             errors.append(f"{entry.relative_path}: {error}")
     return EnrichmentResult(enriched, cached, unmatched, disabled, tuple(errors))
+
+
+def _infer_episodes_nonfatal(
+    repository: CatalogueRepository,
+    entry: LibraryEntry,
+    inference: OpenAIInferenceClient | None,
+    cache_ttl: int,
+    now: datetime,
+    errors: list[str],
+) -> None:
+    if inference is None:
+        return
+    if not any(
+        media.episode_hint is None
+        for media in repository.list_media_files(entry.id)
+    ):
+        return
+    try:
+        _infer_entry(
+            repository,
+            entry,
+            inference,
+            cache_ttl=cache_ttl,
+            now=now,
+        )
+    except InferenceError as error:
+        LOGGER.warning(
+            "model inference path=%s model=%s outcome=error error=%s",
+            _log_value(entry.relative_path),
+            inference.model,
+            _log_value(str(error)),
+        )
+        errors.append(f"{entry.relative_path}: model inference: {error}")
 
 
 def _select_provider_id(
@@ -604,17 +653,14 @@ def _infer_entry(
     cache_key = hashlib.sha256(key_input).hexdigest()
     cached = repository.get_inference_cache(cache_key)
     result: InferenceResult
+    cache_hit = False
     if cached is not None and cached[1] >= now - timedelta(seconds=cache_ttl):
         try:
             result = result_from_data(json.loads(cached[0]), filenames)
         except (json.JSONDecodeError, InferenceError):
             result = inference.infer(entry.title, filenames)
         else:
-            LOGGER.info(
-                "model inference path=%s model=%s outcome=cache_hit",
-                _log_value(entry.relative_path),
-                inference.model,
-            )
+            cache_hit = True
     else:
         result = inference.infer(entry.title, filenames)
     repository.put_inference_cache(
@@ -625,12 +671,22 @@ def _infer_entry(
         created_at=now,
     )
     by_name = {media.filename: media for media in unresolved}
+    applied = 0
     for episode in result.episodes:
         media = by_name.get(episode.filename)
         if media is not None and episode.confidence >= 0.8:
             repository.set_inferred_episode_hint(
                 media.id, episode.hint, episode.confidence
             )
+            if episode.hint is not None:
+                applied += 1
+    LOGGER.info(
+        "model inference path=%s model=%s outcome=%s episode_hints=%d",
+        _log_value(entry.relative_path),
+        inference.model,
+        "cache_hit" if cache_hit else "completed",
+        applied,
+    )
     return result
 
 

@@ -21,7 +21,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
 | 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
 | 11 | End-to-end hardening and first release | In progress | Release-candidate automation/docs complete; Raspberry Pi and amd64 host acceptance pending |
-| 12 | Optional GPT-5.6 Luna inference fallback | In progress | Core fallback, schema v4 cache, episode provenance, docs, and 106 tests pass; operator cache controls and Pi acceptance remain |
+| 12 | Optional GPT-5.6 Luna inference fallback | In progress | Pinned/cached episode inference, schema v4 cache, and 108 tests pass; operator cache controls and Pi acceptance remain |
 
 ## Decisions recorded
 
@@ -823,7 +823,12 @@ integration; Jikan revalidation of model hints; separate high-confidence
 episode provenance; schema v4 digest-keyed SQLite cache; cache reuse on normal
 rescans; safe rendering labels; deployment file ownership; and offline
 configuration/client/integration/migration coverage. Ruff, strict mypy, and
-106 tests pass (four environment-dependent checks skip).
+108 tests pass (four environment-dependent checks skip). A Raspberry Pi
+follow-up also separated episode inference from title resolution: pinned and
+freshly cached provider matches now infer unresolved basenames without
+weakening the title identity. The scanner prunes only a mount-root
+`lost+found`, eliminating the reported ext-filesystem permission warning while
+retaining ordinary nested directories with the same name.
 
 **Still pending before Step 12 is Done:** explicit CLI cache inspection and
 invalidation, transient-failure cooldown/retry telemetry, a separately
