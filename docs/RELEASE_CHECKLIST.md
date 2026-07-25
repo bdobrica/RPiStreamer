@@ -40,6 +40,7 @@ collection size, elapsed scan time, and peak RSS in the release notes.
 
 - [ ] Version agrees in `pyproject.toml`, `rpi_streamer.__version__`, and the
       changelog.
-- [ ] Step 11 host evidence is recorded and no acceptance item is outstanding.
+- [ ] Raspberry Pi arm64 and amd64 host evidence is recorded and no acceptance
+      item is outstanding.
 - [ ] Create signed tag `v0.1.0` and publish the wheel/checksum.
 - [ ] Confirm installation from the published artifact.

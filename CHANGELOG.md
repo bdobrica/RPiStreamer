@@ -8,14 +8,17 @@ All notable changes are documented here. This project follows
 ### Added
 
 - Read-only MP4 discovery, SQLite reconciliation, and periodic rescans.
-- Cached, rate-limited Jikan metadata with conservative matching and sidecar
-  overrides.
+- Cached, rate-limited Tenrai metadata with conservative matching, sidecar
+  overrides, and explicit Jikan/offline rollback modes.
+- Optional bounded OpenAI title and episode inference with structured output,
+  protected credentials, and SQLite caching.
 - Atomic static catalogue generation with accessible single-player episode
   navigation.
 - Nginx byte-range streaming configuration rendered from application settings.
 - Hardened native systemd and rootless-process Compose deployments.
 - Repository-root install, backup, update, validation, and uninstall targets.
 - Offline end-to-end fixtures and CI across supported Python versions.
+- Architecture decision records for the shipped design.
 
 ### Security
 

@@ -10,16 +10,11 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Version 0.1.0rc1 is a release candidate. Steps 1–10 are
-> complete and Step 11's repository work is complete; Raspberry Pi and amd64
-> host acceptance remains before the first release tag. The installable CLI,
-> configuration layer, versioned SQLite repository, and read-only filesystem
-> scanner with cached Tenrai enrichment and atomic static catalogue generation
-> are available with periodic and signal-triggered service operation and an
-> Nginx configuration for static catalogue and MP4 range serving, and a
-> hardened native systemd deployment and a rootless-process Compose deployment.
-> See
-> [PLAN.md](PLAN.md) for tracked progress.
+> **Project status:** Version 0.1.0rc1 is a release candidate. The complete
+> streaming, scanning, metadata, static generation, native systemd, and
+> Compose implementation is available. Release acceptance on Raspberry Pi
+> arm64 and amd64 Linux remains before the first stable tag. Architectural
+> choices are recorded in [docs/adr](docs/adr/README.md).
 
 ## Goals
 
@@ -47,7 +42,7 @@ MP4 browser compatibility still depends on the codecs in each file. Nginx can
 serve any MP4, but common browser-compatible combinations such as H.264 video
 and AAC audio provide the broadest playback support.
 
-## Proposed architecture
+## Architecture
 
 ```mermaid
 flowchart LR
@@ -597,9 +592,9 @@ systemctl show rpi-streamer -p User -p Group -p ReadWritePaths
 
 `reload` sends `SIGHUP` and requests a scan without interrupting the active
 one. Unexpected exits are restarted after ten seconds; deliberate stops are
-not. Startup waits for `network-online.target` so Jikan refreshes do not race
-basic network configuration. A long active scan receives up to five minutes
-to finish cleanly during shutdown.
+not. Startup waits for `network-online.target` so metadata refreshes do not
+race basic network configuration. A long active scan receives up to five
+minutes to finish cleanly during shutdown.
 
 ### Upgrade, backup, rollback, and uninstall
 
@@ -629,7 +624,7 @@ in-place upgrade.
 
 Use `SERVICE_EXECUTABLE=/absolute/path/bin/rpi-streamer` to intentionally move
 or override the installed environment, and `LISTEN=HOST:PORT` to intentionally
-change the listener. For a legacy Step 8 installation, the executable under
+change the listener. For an older installation, the executable under
 `/opt/rpi-streamer/venv` is detected from its existing unit. Its INI, SQLite
 database, generated site, and service enablement are retained. Set
 `media_root = /mnt/media` before the update. Nginx is regenerated from that
@@ -890,8 +885,10 @@ before every upgrade and do not downgrade a migrated database.
 There are no runtime Python dependencies. Development dependencies have
 compatible upper bounds and are reviewed before release. Container base images
 are digest-pinned. See [CHANGELOG.md](CHANGELOG.md),
-[CONTRIBUTING.md](CONTRIBUTING.md), [security guidance](docs/SECURITY.md), and
-the [release checklist](docs/RELEASE_CHECKLIST.md). The checklist includes a
+[CONTRIBUTING.md](CONTRIBUTING.md), the
+[architecture decisions](docs/adr/README.md),
+[security guidance](docs/SECURITY.md), and the
+[release checklist](docs/RELEASE_CHECKLIST.md). The checklist includes a
 repeatable disaster-recovery exercise and the evidence required on Raspberry
 Pi arm64 and amd64 hosts.
 
@@ -914,14 +911,9 @@ Known limitations and deferred work:
 - metadata relationships link locally only when the related provider title is
   already matched in the collection.
 
-The milestone definitions and outstanding host acceptance are tracked in
-[PLAN.md](PLAN.md). The project follows this workflow for every milestone:
-
-1. implement one tracked step and its tests;
-2. run the checks appropriate to that step;
-3. update this README with behavior that is now real;
-4. update the status and notes in `PLAN.md`;
-5. commit the cohesive change with a descriptive message.
+Durable design choices and their consequences are recorded as
+[architecture decision records](docs/adr/README.md). Current release
+acceptance is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## License
 
