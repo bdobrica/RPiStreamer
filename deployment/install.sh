@@ -89,7 +89,9 @@ systemd-sysusers /usr/lib/sysusers.d/rpi-streamer.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/rpi-streamer.conf
 if ! runuser -u rpi-streamer -- test -x "$executable"; then
     echo "rpi-streamer installer: service account cannot execute $executable" >&2
-    echo "choose an environment in a directory traversable by rpi-streamer" >&2
+    echo "a virtual environment below a private home directory is not suitable" >&2
+    echo "choose an environment in a directory traversable by rpi-streamer, such as /opt/rpi-streamer-env" >&2
+    echo "the installer will not weaken home-directory permissions automatically" >&2
     exit 3
 fi
 

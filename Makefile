@@ -45,7 +45,41 @@ install: build
 backup:
 	sudo "$(CURDIR)/deployment/backup.sh" "$(BACKUP_DIR)"
 
-update: backup install
+update: backup build
+	set -eu
+	set -- "$(DIST_DIR)"/rpi_streamer-*.whl
+	wheel=$$1
+	test -f "$$wheel"
+	service_executable="$(SERVICE_EXECUTABLE)"
+	if [ "$(origin SERVICE_EXECUTABLE)" = "file" ] && \
+	   [ -r /etc/systemd/system/rpi-streamer.service ]; then
+		installed_executable=$$(sed -n \
+			's|^ExecStart=\([^[:space:]]*\).*|\1|p' \
+			/etc/systemd/system/rpi-streamer.service)
+		if [ -n "$$installed_executable" ]; then
+			service_executable=$$installed_executable
+		fi
+	fi
+	test -x "$$service_executable"
+	service_python=$$(sed -n '1s|^#!||p' "$$service_executable")
+	if [ ! -x "$$service_python" ]; then
+		echo "Cannot determine the Python interpreter for $$service_executable" >&2
+		echo "Set SERVICE_EXECUTABLE to an installed rpi-streamer script." >&2
+		exit 3
+	fi
+	"$$service_python" -m pip install --upgrade "$$wheel"
+	listen="$(LISTEN)"
+	if [ "$(origin LISTEN)" = "file" ] && \
+	   [ -r /etc/nginx/sites-available/rpi-streamer.conf ]; then
+		installed_listen=$$(sed -n \
+			's/^[[:space:]]*listen[[:space:]]\([^;]*\);.*/\1/p' \
+			/etc/nginx/sites-available/rpi-streamer.conf)
+		if [ -n "$$installed_listen" ]; then
+			listen=$$installed_listen
+		fi
+	fi
+	sudo "$(CURDIR)/deployment/install.sh" \
+		"$$wheel" "$$listen" "$$service_executable" "$(MEDIA_ROOT)"
 	sudo systemctl restart rpi-streamer
 	sudo systemctl reload nginx
 

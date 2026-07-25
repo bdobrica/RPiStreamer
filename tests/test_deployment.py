@@ -74,6 +74,10 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn("deployment/dist", text)
         self.assertIn('"$(PYTHON)" -m pip', text)
         self.assertIn("SERVICE_EXECUTABLE", text)
+        self.assertIn("installed_executable", text)
+        self.assertIn("installed_listen", text)
+        self.assertIn('"$$service_python" -m pip install', text)
+        self.assertNotIn("update: backup install", text)
         self.assertIn("MEDIA_ROOT ?= /mnt/anime", text)
         for target in (
             "help:",

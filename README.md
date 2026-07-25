@@ -446,12 +446,19 @@ make validate PYTHON=/opt/rpi-streamer-env/bin/python
 sudo systemctl enable --now rpi-streamer nginx
 ```
 
-An activated environment works with plain `make install`. A system Python can
-also be selected, but distributions enforcing PEP 668 may reject installation;
-create a venv instead of using `--break-system-packages`. The selected console
-script must be executable by the `rpi-streamer` account. `ProtectHome=read-only`
-prevents service writes below home directories, while normal Unix traversal
-permissions still apply; `/opt` is the simplest production location.
+An activated environment works with plain `make install` only when its entire
+path is traversable by the `rpi-streamer` system account. A typical
+`/home/USER` mode of `0700` deliberately prevents that account from reaching a
+virtual environment below the home directory. The installer reports this
+condition and does not weaken home permissions. Use an environment below
+`/opt`, as in the example, for the systemd service. A system Python can also be
+selected, but distributions enforcing PEP 668 may reject installation; create
+a venv instead of using `--break-system-packages`.
+
+`ProtectHome=read-only` prevents service writes below home directories but
+does not override normal Unix traversal permissions. A home environment may
+still be useful for development and building the wheel; it need not be the
+environment used by the installed service.
 
 The installed layout is:
 
@@ -520,21 +527,25 @@ to finish cleanly during shutdown.
 
 ### Upgrade, backup, rollback, and uninstall
 
-From the updated repository root, upgrade the selected environment and
-deployment assets, validate, and restart with:
+From the updated repository root, `make update` reads the current systemd unit
+and upgrades that service environment. It also preserves the installed Nginx
+listen address unless `LISTEN` is explicitly supplied. The caller's active
+environment is used to build the wheel, but it does not silently replace an
+existing service environment:
 
 ```bash
-make update PYTHON=/opt/rpi-streamer-env/bin/python \
-  LISTEN=192.168.11.111:80
+make update
 make validate PYTHON=/opt/rpi-streamer-env/bin/python
 ```
 
-For a legacy Step 8 installation, use
-`PYTHON=/opt/rpi-streamer/venv/bin/python`; its existing environment, INI,
-SQLite database, generated site, and service enablement are retained. Set
+Use `SERVICE_EXECUTABLE=/absolute/path/bin/rpi-streamer` to intentionally move
+or override the installed environment, and `LISTEN=HOST:PORT` to intentionally
+change the listener. For a legacy Step 8 installation, the executable under
+`/opt/rpi-streamer/venv` is detected from its existing unit. Its INI, SQLite
+database, generated site, and service enablement are retained. Set
 `media_root = /mnt/media` before the update. Nginx is regenerated from that
-INI, and a failed syntax check restores the previous site configuration. On an
-existing installation, `MEDIA_ROOT` does not override the preserved INI.
+INI, and a failed syntax check restores the previous site configuration. On
+an existing installation, `MEDIA_ROOT` does not override the preserved INI.
 
 For a consistent backup, briefly stop writes and archive the complete state
 (database, artwork, status, and last generated site):

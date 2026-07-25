@@ -673,6 +673,15 @@ library on the Raspberry Pi, record cold/warm duration and peak RSS, and set a
 numeric performance budget from that measurement. Once those checks pass,
 mark Step 11 Done and create the `chore: prepare initial release` commit/tag.
 
+**Raspberry Pi update feedback:** the first arm64 update attempt safely stopped
+when the active development environment under `/home/pi` was not traversable
+by the service account. Updates now discover and upgrade the executable from
+the installed systemd unit, preserve the installed Nginx listener by default,
+and use the caller's selected Python only to build the wheel. Explicit
+`SERVICE_EXECUTABLE` and `LISTEN` values still override discovery. The
+installer explains why private home environments cannot run as the service and
+does not weaken home-directory permissions.
+
 ## Cross-cutting quality rules
 
 These apply to every milestone:
