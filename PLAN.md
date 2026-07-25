@@ -691,6 +691,9 @@ the package update finished. The update is now one failure-safe transaction:
 it preserves prior active state, stops the indexer across backup/build/install,
 and restarts it via a shell trap on failure. Partial scans also log their
 bounded, sanitized issue summary instead of reporting only an error count.
+Because post-release-candidate fixes can retain the same package version,
+repository-local wheel installation now uses a no-dependency forced reinstall;
+`make update` therefore cannot silently retain an older `0.1.0rc1` wheel.
 
 ## Step 12 — Optional GPT-5.6 Luna inference fallback
 

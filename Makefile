@@ -39,7 +39,7 @@ install: build
 	set -- "$(DIST_DIR)"/rpi_streamer-*.whl
 	wheel=$$1
 	test -f "$$wheel"
-	"$(PYTHON)" -m pip install --upgrade "$$wheel"
+	"$(PYTHON)" -m pip install --force-reinstall --no-deps "$$wheel"
 	sudo "$(CURDIR)/deployment/install.sh" "$$wheel" "$(LISTEN)" "$(SERVICE_EXECUTABLE)" "$(MEDIA_ROOT)"
 
 backup:
@@ -79,7 +79,7 @@ update:
 		echo "Set SERVICE_EXECUTABLE to an installed rpi-streamer script." >&2
 		exit 3
 	fi
-	sudo "$$service_python" -m pip install --upgrade "$$wheel"
+	sudo "$$service_python" -m pip install --force-reinstall --no-deps "$$wheel"
 	listen="$(LISTEN)"
 	if [ "$(origin LISTEN)" = "file" ] && \
 	   [ -r /etc/nginx/sites-available/rpi-streamer.conf ]; then

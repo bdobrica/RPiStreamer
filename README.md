@@ -542,6 +542,10 @@ make update
 make validate PYTHON=/opt/rpi-streamer-env/bin/python
 ```
 
+The locally built wheel is reinstalled even when its package version matches
+the installed version. This ensures fixes made between release-candidate builds
+are deployed rather than skipped by pip's normal upgrade comparison.
+
 If the indexer is running, the update stops it before backup and keeps it
 stopped throughout wheel construction, package replacement, unit/Nginx
 installation, and validation. A shell trap restarts it after any failed update;

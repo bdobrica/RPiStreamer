@@ -60,7 +60,8 @@ if [ -z "$executable" ]; then
     if [ ! -x /opt/rpi-streamer/venv/bin/python ]; then
         python3 -m venv /opt/rpi-streamer/venv
     fi
-    /opt/rpi-streamer/venv/bin/python -m pip install --upgrade "$wheel"
+    /opt/rpi-streamer/venv/bin/python -m pip install \
+        --force-reinstall --no-deps "$wheel"
     executable=/opt/rpi-streamer/venv/bin/rpi-streamer
 fi
 case "$executable" in

@@ -60,7 +60,7 @@ class NativeDeploymentTests(unittest.TestCase):
             text=True,
         )
         text = INSTALLER.read_text(encoding="utf-8")
-        self.assertIn("pip install --upgrade", text)
+        self.assertIn("pip install \\\n        --force-reinstall --no-deps", text)
         self.assertIn("if [ ! -e /etc/rpi-streamer/rpi-streamer.ini ]", text)
         self.assertIn("nginx -t", text)
         self.assertIn("systemctl daemon-reload", text)
@@ -76,7 +76,12 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn("SERVICE_EXECUTABLE", text)
         self.assertIn("installed_executable", text)
         self.assertIn("installed_listen", text)
-        self.assertIn('sudo "$$service_python" -m pip install', text)
+        self.assertIn(
+            'sudo "$$service_python" -m pip install --force-reinstall --no-deps',
+            text,
+        )
+        self.assertIn('"$(PYTHON)" -m pip install --force-reinstall --no-deps', text)
+        self.assertNotIn('pip install --upgrade "$$wheel"', text)
         self.assertIn("systemctl stop rpi-streamer", text)
         self.assertIn("trap 'if", text)
         self.assertNotIn("update: backup install", text)
