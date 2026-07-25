@@ -680,7 +680,11 @@ the installed systemd unit, preserve the installed Nginx listener by default,
 and use the caller's selected Python only to build the wheel. Explicit
 `SERVICE_EXECUTABLE` and `LISTEN` values still override discovery. The
 installer explains why private home environments cannot run as the service and
-does not weaken home-directory permissions.
+does not weaken home-directory permissions. A follow-up arm64 attempt confirmed
+the installed `/opt/rpi-streamer/venv` was discovered, then exposed that this
+legacy environment is root-owned; update installation into the discovered
+production interpreter now runs through `sudo` while wheel construction
+remains unprivileged.
 
 ## Cross-cutting quality rules
 

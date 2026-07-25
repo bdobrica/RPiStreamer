@@ -531,7 +531,9 @@ From the updated repository root, `make update` reads the current systemd unit
 and upgrades that service environment. It also preserves the installed Nginx
 listen address unless `LISTEN` is explicitly supplied. The caller's active
 environment is used to build the wheel, but it does not silently replace an
-existing service environment:
+existing service environment. Building and dependency resolution remain
+unprivileged; only installation into the normally root-owned production
+environment runs through `sudo`:
 
 ```bash
 make update

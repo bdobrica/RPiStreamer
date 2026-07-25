@@ -67,7 +67,7 @@ update: backup build
 		echo "Set SERVICE_EXECUTABLE to an installed rpi-streamer script." >&2
 		exit 3
 	fi
-	"$$service_python" -m pip install --upgrade "$$wheel"
+	sudo "$$service_python" -m pip install --upgrade "$$wheel"
 	listen="$(LISTEN)"
 	if [ "$(origin LISTEN)" = "file" ] && \
 	   [ -r /etc/nginx/sites-available/rpi-streamer.conf ]; then
