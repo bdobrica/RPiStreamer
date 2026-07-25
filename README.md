@@ -10,7 +10,9 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–10 are complete. The installable CLI,
+> **Project status:** Version 0.1.0rc1 is a release candidate. Steps 1–10 are
+> complete and Step 11's repository work is complete; Raspberry Pi and amd64
+> host acceptance remains before the first release tag. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
 > scanner with cached Jikan enrichment and atomic static catalogue generation
 > are available with periodic and signal-triggered service operation and an
@@ -762,17 +764,61 @@ requests, Unicode MP4 URLs, `200`/`206`/`416`, byte-accurate seeking, MIME,
 cache headers, and rejection of traversal, dotfiles, symlinks, and non-media
 files.
 
-The remaining fixtures, deployment assets, and acceptance tests are specified
-in [PLAN.md](PLAN.md). The project follows this workflow for every milestone:
+The offline end-to-end fixture runs discovery, mocked metadata enrichment,
+SQLite persistence, static generation, an unchanged rescan, and removal
+reconciliation. `make acceptance` adds the Nginx syntax and browser-style
+range suite when Nginx is installed. Database transaction tests and forced
+publication failures verify that interrupted writes retain the previous
+database state and published catalogue.
+
+GitHub Actions runs formatting, linting, strict typing, tests, and wheel builds
+on Python 3.11–3.13. Separate jobs install Nginx for the streaming integration
+suite and build the amd64 container targets. Normal CI and tests remain
+network-independent.
+
+## Release and support policy
+
+RPi Streamer uses semantic versions. The 0.1.0 release candidate supports
+Python 3.11–3.13,
+Debian 12/Raspberry Pi OS Bookworm or newer Linux hosts with systemd and
+Nginx, and container deployment on Linux amd64/arm64. Other POSIX systems may
+work but are not release-tested. Database migrations are forward-only; back up
+before every upgrade and do not downgrade a migrated database.
+
+There are no runtime Python dependencies. Development dependencies have
+compatible upper bounds and are reviewed before release. Container base images
+are digest-pinned. See [CHANGELOG.md](CHANGELOG.md),
+[CONTRIBUTING.md](CONTRIBUTING.md), [security guidance](docs/SECURITY.md), and
+the [release checklist](docs/RELEASE_CHECKLIST.md). The checklist includes a
+repeatable disaster-recovery exercise and the evidence required on Raspberry
+Pi arm64 and amd64 hosts.
+
+Performance depends primarily on directory-entry latency, SQLite storage, and
+metadata cache misses rather than MP4 size because videos are not hashed.
+Release profiling records title/file count, warm and cold elapsed scan time,
+and peak RSS on real Raspberry Pi hardware. No numeric budget is claimed until
+the first host measurement establishes an honest baseline.
+
+Known limitations and deferred work:
+
+- trusted-local-network operation only; no authentication or TLS;
+- MP4 only, with no transcoding, remuxing, or HLS;
+- static pages with no dynamic API or full-text search index;
+- Jikan as the only metadata provider;
+- model-assisted title normalization is not implemented and, if added, must be
+  optional, credential-protected, bounded, structured, and cached;
+- browser playback remains dependent on codecs in the source MP4;
+- metadata relationships link locally only when the related provider title is
+  already matched in the collection.
+
+The milestone definitions and outstanding host acceptance are tracked in
+[PLAN.md](PLAN.md). The project follows this workflow for every milestone:
 
 1. implement one tracked step and its tests;
 2. run the checks appropriate to that step;
 3. update this README with behavior that is now real;
 4. update the status and notes in `PLAN.md`;
 5. commit the cohesive change with a descriptive message.
-
-Until a milestone is marked **Done**, its interface in this README is a design
-target and may change during implementation.
 
 ## License
 

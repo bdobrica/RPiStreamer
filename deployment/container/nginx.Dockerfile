@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 ARG NGINX_IMAGE=nginx:1.28.0-alpine3.21@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284
 FROM ${NGINX_IMAGE}
-ARG VERSION=0.1.0.dev0
+ARG VERSION=0.1.0rc1
 ARG REVISION=unknown
 ARG CREATED=unknown
 LABEL org.opencontainers.image.title="RPi Streamer web server" \

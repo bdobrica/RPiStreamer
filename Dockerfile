@@ -11,7 +11,7 @@ RUN python -m pip install --no-cache-dir "setuptools==${SETUPTOOLS_VERSION}" \
        --wheel-dir /build/dist .
 
 FROM ${PYTHON_IMAGE} AS runtime
-ARG VERSION=0.1.0.dev0
+ARG VERSION=0.1.0rc1
 ARG REVISION=unknown
 ARG CREATED=unknown
 LABEL org.opencontainers.image.title="RPi Streamer indexer" \

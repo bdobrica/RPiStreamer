@@ -7,7 +7,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VERSION: ${RPI_STREAMER_VERSION:-0.1.0.dev0}
+        VERSION: ${RPI_STREAMER_VERSION:-0.1.0rc1}
         REVISION: ${RPI_STREAMER_REVISION:-unknown}
         CREATED: ${RPI_STREAMER_CREATED:-unknown}
     environment:
@@ -52,7 +52,7 @@ services:
       context: .
       dockerfile: deployment/container/nginx.Dockerfile
       args:
-        VERSION: ${RPI_STREAMER_VERSION:-0.1.0.dev0}
+        VERSION: ${RPI_STREAMER_VERSION:-0.1.0rc1}
         REVISION: ${RPI_STREAMER_REVISION:-unknown}
         CREATED: ${RPI_STREAMER_CREATED:-unknown}
     depends_on:

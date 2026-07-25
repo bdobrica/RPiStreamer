@@ -7,11 +7,12 @@ BACKUP_DIR ?= /var/backups/rpi-streamer
 
 .DEFAULT_GOAL := help
 .ONESHELL:
-.PHONY: help build check install update backup validate restart uninstall clean
+.PHONY: help build check acceptance install update backup validate restart uninstall clean
 
 help:
 	@echo "RPi Streamer targets:"
 	@echo "  make check                         Run formatting, lint, typing, and tests"
+	@echo "  make acceptance                    Run optional host acceptance checks"
 	@echo "  make install [LISTEN=HOST:PORT]    Build and install from the repo root"
 	@echo "  make update [LISTEN=HOST:PORT]     Update an existing native installation"
 	@echo "  make backup                        Back up config, state, and service assets"
@@ -29,6 +30,9 @@ check:
 	"$(PYTHON)" -m ruff check .
 	"$(PYTHON)" -m mypy
 	"$(PYTHON)" -m pytest
+
+acceptance:
+	"$(PYTHON)" -m pytest tests/test_end_to_end.py tests/test_nginx.py
 
 install: build
 	set -eu

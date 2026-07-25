@@ -20,7 +20,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 8 | Native packaging and systemd deployment | Done | Wheel installer, hardened unit, account/state declarations, and deployment audits |
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
 | 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
-| 11 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
+| 11 | End-to-end hardening and first release | In progress | Release-candidate automation/docs complete; Raspberry Pi and amd64 host acceptance pending |
 
 ## Decisions recorded
 
@@ -621,7 +621,7 @@ with strict structured output only after deterministic Jikan matching fails.
 
 ## Step 11 — End-to-end hardening and first release
 
-**Status: Pending**
+**Status: In progress**
 
 Close cross-component gaps and prepare a maintainable first release.
 
@@ -652,6 +652,26 @@ Close cross-component gaps and prepare a maintainable first release.
 **Documentation/commit:** update all docs to describe shipped behavior, mark
 Step 11 Done, create a changelog entry, and commit as
 `chore: prepare initial release`.
+
+**Release-candidate work delivered:** version 0.1.0rc1 metadata and an
+unreleased 0.1.0 changelog;
+Python 3.11–3.13 CI for formatting, linting, strict typing, offline tests,
+wheel builds and artifacts; Nginx syntax/range integration CI; amd64 container
+build CI; a deterministic end-to-end fixture spanning scan, mocked metadata,
+SQLite, generation, rescan, and removal; and a repository-root acceptance
+target. Existing transaction rollback and failed-publication tests cover
+power-loss-style atomicity boundaries. The dependency, remote-content,
+filesystem, logging, binding, systemd, and container audit is recorded in the
+security guide. The support matrix, semantic-version policy, contribution
+guide, known limitations, deferred features, disaster-recovery procedure, and
+release checklist are documented.
+
+**Remaining before Done:** run and record the release checklist on one
+Raspberry Pi OS Bookworm arm64 host and one supported amd64 Linux host,
+including install/stream/seek/rescan/recovery evidence. Profile a representative
+library on the Raspberry Pi, record cold/warm duration and peak RSS, and set a
+numeric performance budget from that measurement. Once those checks pass,
+mark Step 11 Done and create the `chore: prepare initial release` commit/tag.
 
 ## Cross-cutting quality rules
 
