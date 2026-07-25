@@ -21,7 +21,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
 | 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
 | 11 | End-to-end hardening and first release | In progress | Release-candidate automation/docs complete; Raspberry Pi and amd64 host acceptance pending |
-| 12 | Optional GPT-5.6 Luna inference fallback | Pending | Credentialed, bounded, cached structured inference for unresolved titles and episode numbers |
+| 12 | Optional GPT-5.6 Luna inference fallback | In progress | Core fallback, schema v4 cache, episode provenance, docs, and 106 tests pass; operator cache controls and Pi acceptance remain |
 
 ## Decisions recorded
 
@@ -697,7 +697,7 @@ repository-local wheel installation now uses a no-dependency forced reinstall;
 
 ## Step 12 — Optional GPT-5.6 Luna inference fallback
 
-**Status: Pending**
+**Status: In progress**
 
 Add an opt-in, low-volume OpenAI fallback for local names that deterministic
 parsing or Jikan matching cannot resolve. The feature must remain an enrichment
@@ -709,13 +709,13 @@ to work without an OpenAI account or network access.
 - Add disabled-by-default settings for model-assisted inference, with
   `gpt-5.6-luna` as the initial model, explicit request timeout, per-scan call
   limit, and an optional cache lifetime.
-- Accept the API key from `OPENAI_API_KEY` or a dedicated protected environment
-  variable. Do not write it to SQLite, generated HTML, logs, backups, container
-  images, or the ordinary `rpi-streamer.ini`.
-- For systemd, document a root-owned `0600` credential/environment file outside
-  the normal configuration backup and load it without exposing the value in the
-  unit. For Compose, use a runtime secret or externally supplied environment
-  value rather than committing it to `.env`.
+- Accept the API key from the ordinary INI, as explicitly requested for this
+  LAN-only deployment, or `RPI_STREAMER_OPENAI_API_KEY` with environment
+  precedence. Never write it to SQLite, generated HTML, logs, container images,
+  or normalized configuration output.
+- Keep the native INI `root:rpi-streamer` and mode `0640`. Document that normal
+  backups contain the INI and therefore the credential. For Compose, prefer an
+  externally supplied runtime environment value rather than committing it.
 - Validate the complete opt-in configuration at startup. When inference is
   disabled, do not require the OpenAI package or an API key.
 
@@ -813,6 +813,22 @@ and examples for native and container deployments. Update the README and this
 table after each implemented substep; mark Step 12 Done only after offline and
 Raspberry Pi acceptance; commit the completed feature as
 `feat: add optional model-assisted inference`.
+
+**Implemented in this increment:** disabled-by-default configuration and
+redacted diagnostics; INI/environment credential precedence; dependency-free
+Responses API client using `store=false` and strict Structured Outputs;
+bounded title/filename/request/response/token inputs; refusal and malformed
+output rejection; per-scan call budgeting; deterministic-match-first title
+integration; Jikan revalidation of model hints; separate high-confidence
+episode provenance; schema v4 digest-keyed SQLite cache; cache reuse on normal
+rescans; safe rendering labels; deployment file ownership; and offline
+configuration/client/integration/migration coverage. Ruff, strict mypy, and
+106 tests pass (four environment-dependent checks skip).
+
+**Still pending before Step 12 is Done:** explicit CLI cache inspection and
+invalidation, transient-failure cooldown/retry telemetry, a separately
+requested forced-inference refresh, broader episode taxonomy fixtures, an
+opt-in live OpenAI smoke test, and Raspberry Pi cost/RSS/timing acceptance.
 
 ## Cross-cutting quality rules
 

@@ -101,8 +101,9 @@ if [ ! -e /etc/rpi-streamer/rpi-streamer.ini ]; then
     sed "s|^media_root = .*|media_root = $media_root|" \
         "$source_dir/config/rpi-streamer.ini" \
         > /etc/rpi-streamer/rpi-streamer.ini
-    chmod 0644 /etc/rpi-streamer/rpi-streamer.ini
 fi
+chown root:rpi-streamer /etc/rpi-streamer/rpi-streamer.ini
+chmod 0640 /etc/rpi-streamer/rpi-streamer.ini
 unit=/etc/systemd/system/rpi-streamer.service
 unit_backup=/etc/systemd/system/rpi-streamer.service.previous
 if [ -e "$unit" ]; then

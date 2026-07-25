@@ -22,6 +22,7 @@ _TRUE_VALUES: Final = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES: Final = frozenset({"0", "false", "no", "off"})
 _PROVIDERS: Final = frozenset({"jikan", "none"})
 _LOG_LEVELS: Final = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
+_MODEL_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", re.ASCII)
 
 
 class ConfigurationError(ValueError):
@@ -41,9 +42,15 @@ class Settings:
     metadata_refresh_interval: int = 30 * 86400
     metadata_language: str = "en"
     download_artwork: bool = True
+    openai_fallback_enabled: bool = False
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.6-luna"
+    openai_timeout: int = 30
+    openai_max_calls_per_scan: int = 3
+    openai_cache_ttl: int = 90 * 86400
     log_level: str = "INFO"
 
-    def as_serializable(self) -> dict[str, str | int | bool]:
+    def as_serializable(self) -> dict[str, str | int | bool | None]:
         """Return deterministic, non-secret configuration output."""
 
         values = asdict(self)
@@ -55,6 +62,12 @@ class Settings:
             "metadata_language": str(values["metadata_language"]),
             "metadata_provider": str(values["metadata_provider"]),
             "metadata_refresh_interval": int(values["metadata_refresh_interval"]),
+            "openai_api_key": "[configured]" if self.openai_api_key else None,
+            "openai_cache_ttl": self.openai_cache_ttl,
+            "openai_fallback_enabled": self.openai_fallback_enabled,
+            "openai_max_calls_per_scan": self.openai_max_calls_per_scan,
+            "openai_model": self.openai_model,
+            "openai_timeout": self.openai_timeout,
             "scan_interval": int(values["scan_interval"]),
             "site_dir": str(values["site_dir"]),
             "state_dir": str(values["state_dir"]),
@@ -76,6 +89,12 @@ _DEFAULT_TEXT: Final[dict[str, str]] = {
     "metadata_refresh_interval": "30d",
     "metadata_language": "en",
     "download_artwork": "true",
+    "openai_fallback_enabled": "false",
+    "openai_api_key": "",
+    "openai_model": "gpt-5.6-luna",
+    "openai_timeout": "30s",
+    "openai_max_calls_per_scan": "3",
+    "openai_cache_ttl": "90d",
     "log_level": "INFO",
 }
 _ENV_BY_KEY: Final = {key: f"{ENV_PREFIX}{key.upper()}" for key in _DEFAULT_TEXT}
@@ -155,6 +174,18 @@ def load_settings(
         download_artwork=parse_bool(
             values["download_artwork"], name="download_artwork"
         ),
+        openai_fallback_enabled=parse_bool(
+            values["openai_fallback_enabled"], name="openai_fallback_enabled"
+        ),
+        openai_api_key=values["openai_api_key"].strip() or None,
+        openai_model=values["openai_model"].strip(),
+        openai_timeout=parse_duration(values["openai_timeout"], name="openai_timeout"),
+        openai_max_calls_per_scan=_nonnegative_int(
+            values["openai_max_calls_per_scan"], "openai_max_calls_per_scan"
+        ),
+        openai_cache_ttl=parse_duration(
+            values["openai_cache_ttl"], name="openai_cache_ttl"
+        ),
         log_level=values["log_level"].strip().upper(),
     )
     _validate(settings)
@@ -195,6 +226,16 @@ def _absolute_path(value: str, name: str) -> Path:
     return Path(os.path.abspath(path))
 
 
+def _nonnegative_int(value: str, name: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise ConfigurationError(f"{name} must be a non-negative integer") from error
+    if parsed < 0:
+        raise ConfigurationError(f"{name} must be a non-negative integer")
+    return parsed
+
+
 def _validate(settings: Settings) -> None:
     if not settings.media_root.is_dir():
         raise ConfigurationError(
@@ -217,6 +258,20 @@ def _validate(settings: Settings) -> None:
         )
     if settings.metadata_refresh_interval <= 0:
         raise ConfigurationError("metadata_refresh_interval must be greater than zero")
+    if settings.openai_fallback_enabled and not settings.openai_api_key:
+        raise ConfigurationError(
+            "openai_api_key is required when openai_fallback_enabled is true"
+        )
+    if not _MODEL_RE.fullmatch(settings.openai_model):
+        raise ConfigurationError("openai_model is not a valid model identifier")
+    if settings.openai_timeout <= 0:
+        raise ConfigurationError("openai_timeout must be greater than zero")
+    if settings.openai_fallback_enabled and settings.openai_max_calls_per_scan <= 0:
+        raise ConfigurationError(
+            "openai_max_calls_per_scan must be greater than zero when enabled"
+        )
+    if settings.openai_cache_ttl <= 0:
+        raise ConfigurationError("openai_cache_ttl must be greater than zero")
 
     paths = {
         "media_root": settings.media_root,

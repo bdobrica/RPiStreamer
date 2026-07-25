@@ -45,6 +45,12 @@ class SettingsTestCase(unittest.TestCase):
             "metadata_refresh_interval": "30d",
             "metadata_language": "en",
             "download_artwork": "true",
+            "openai_fallback_enabled": "false",
+            "openai_api_key": "",
+            "openai_model": "gpt-5.6-luna",
+            "openai_timeout": "30s",
+            "openai_max_calls_per_scan": "3",
+            "openai_cache_ttl": "90d",
             "log_level": "INFO",
         }
         values.update(overrides)
@@ -95,6 +101,30 @@ class SettingsTestCase(unittest.TestCase):
 
         self.assertEqual(settings.scan_interval, 1200)
         self.assertEqual(settings.log_level, "ERROR")
+
+    def test_openai_key_can_be_loaded_from_ini_or_overridden_and_is_redacted(
+        self,
+    ) -> None:
+        path = self._write_config(
+            openai_fallback_enabled="true",
+            openai_api_key="ini-secret",
+        )
+        from_ini = load_settings(config_path=path, environ={})
+        overridden = load_settings(
+            config_path=path,
+            environ={"RPI_STREAMER_OPENAI_API_KEY": "environment-secret"},
+        )
+
+        self.assertEqual(from_ini.openai_api_key, "ini-secret")
+        self.assertEqual(overridden.openai_api_key, "environment-secret")
+        self.assertNotIn("ini-secret", from_ini.to_json())
+        self.assertIn('"openai_api_key": "[configured]"', from_ini.to_json())
+
+    def test_enabled_openai_fallback_requires_a_key(self) -> None:
+        path = self._write_config(openai_fallback_enabled="true")
+
+        with self.assertRaisesRegex(ConfigurationError, "openai_api_key"):
+            load_settings(config_path=path, environ={})
 
     def test_every_setting_has_an_environment_override(self) -> None:
         alternate_media = self.root / "alternate-media"

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 3
+LATEST_SCHEMA_VERSION: Final = 4
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -47,6 +47,8 @@ class MediaFile:
     mtime_ns: int
     local_identity: str | None
     episode_hint: str | None
+    inferred_episode_hint: str | None
+    inference_confidence: float | None
     available: bool
     first_seen_at: datetime
     last_seen_at: datetime
@@ -279,6 +281,27 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
             filler INTEGER NOT NULL DEFAULT 0 CHECK (filler IN (0, 1)),
             recap INTEGER NOT NULL DEFAULT 0 CHECK (recap IN (0, 1)),
             PRIMARY KEY (provider_record_id, episode_number)
+        )
+        """,
+    ),
+    4: (
+        """
+        ALTER TABLE media_files ADD COLUMN inferred_episode_hint TEXT
+        """,
+        """
+        ALTER TABLE media_files ADD COLUMN inference_confidence REAL
+            CHECK (
+                inference_confidence IS NULL
+                OR (inference_confidence >= 0 AND inference_confidence <= 1)
+            )
+        """,
+        """
+        CREATE TABLE inference_cache (
+            cache_key TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
         """,
     ),
@@ -634,6 +657,62 @@ class CatalogueRepository:
                 (library_entry_id, _utc_text(seen_before)),
             )
         return cursor.rowcount
+
+    def set_inferred_episode_hint(
+        self,
+        media_file_id: int,
+        hint: str | None,
+        confidence: float | None,
+    ) -> None:
+        if confidence is not None and not 0 <= confidence <= 1:
+            raise ValueError("confidence must be between zero and one")
+        with self.transaction():
+            self._connection.execute(
+                """
+                UPDATE media_files
+                SET inferred_episode_hint = ?, inference_confidence = ?
+                WHERE id = ?
+                """,
+                (hint, confidence, media_file_id),
+            )
+
+    def get_inference_cache(self, cache_key: str) -> tuple[str, datetime] | None:
+        row = self._connection.execute(
+            "SELECT result_json, created_at FROM inference_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        created = _datetime(str(row["created_at"]))
+        assert created is not None
+        return str(row["result_json"]), created
+
+    def put_inference_cache(
+        self,
+        cache_key: str,
+        *,
+        model: str,
+        schema_version: str,
+        result: object,
+        created_at: datetime,
+    ) -> None:
+        encoded = json.dumps(
+            result, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        with self.transaction():
+            self._connection.execute(
+                """
+                INSERT INTO inference_cache(
+                    cache_key, model, schema_version, result_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    model = excluded.model,
+                    schema_version = excluded.schema_version,
+                    result_json = excluded.result_json,
+                    created_at = excluded.created_at
+                """,
+                (cache_key, model, schema_version, encoded, _utc_text(created_at)),
+            )
 
     def upsert_provider_record(
         self,
@@ -1124,6 +1203,16 @@ def _media_file(row: sqlite3.Row) -> MediaFile:
         ),
         episode_hint=(
             None if row["episode_hint"] is None else str(row["episode_hint"])
+        ),
+        inferred_episode_hint=(
+            None
+            if row["inferred_episode_hint"] is None
+            else str(row["inferred_episode_hint"])
+        ),
+        inference_confidence=(
+            None
+            if row["inference_confidence"] is None
+            else float(row["inference_confidence"])
         ),
         available=bool(row["available"]),
         first_seen_at=first_seen,

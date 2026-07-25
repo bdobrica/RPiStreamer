@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -24,6 +25,16 @@ from rpi_streamer.database import (
     ProviderEpisode,
     ProviderRecord,
     Relation,
+)
+from rpi_streamer.inference import (
+    SCHEMA_VERSION as INFERENCE_SCHEMA_VERSION,
+)
+from rpi_streamer.inference import (
+    InferenceError,
+    InferenceResult,
+    OpenAIInferenceClient,
+    result_data,
+    result_from_data,
 )
 
 JIKAN_BASE_URL: Final = "https://api.jikan.moe/v4"
@@ -399,6 +410,8 @@ def enrich_catalogue(
     state_dir: Path,
     download_artwork: bool,
     metadata_language: str = "en",
+    inference: OpenAIInferenceClient | None = None,
+    inference_cache_ttl: int = 90 * 86400,
     now: datetime | None = None,
 ) -> EnrichmentResult:
     """Enrich available titles; isolate provider failures per library entry."""
@@ -416,7 +429,15 @@ def enrich_catalogue(
             cached += 1
             continue
         try:
-            provider_id = _select_provider_id(entry, provider, record)
+            provider_id = _select_provider_id(
+                repository,
+                entry,
+                provider,
+                record,
+                inference=inference,
+                inference_cache_ttl=inference_cache_ttl,
+                now=timestamp,
+            )
             if provider_id is None:
                 unmatched += 1
                 continue
@@ -462,9 +483,14 @@ def enrich_catalogue(
 
 
 def _select_provider_id(
+    repository: CatalogueRepository,
     entry: LibraryEntry,
     provider: AnimeProvider,
     record: ProviderRecord | None,
+    *,
+    inference: OpenAIInferenceClient | None,
+    inference_cache_ttl: int,
+    now: datetime,
 ) -> str | None:
     if entry.pinned_provider == provider.name and entry.pinned_provider_id:
         LOGGER.info(
@@ -476,11 +502,12 @@ def _select_provider_id(
         return entry.pinned_provider_id
     if record is not None:
         return record.provider_id
-    candidates = list(provider.search(entry.title))
-    matched, outcome = _match_outcome(entry.title, candidates)
-    if matched is None:
+    search_error: ProviderError | None = None
+    try:
+        candidates = list(provider.search(entry.title))
+        matched, outcome = _match_outcome(entry.title, candidates)
         words = entry.title.split()
-        if len(words) >= 5:
+        if matched is None and len(words) >= 5:
             fallback = " ".join(words[:-1])
             seen = {candidate.provider_id for candidate in candidates}
             candidates.extend(
@@ -490,14 +517,58 @@ def _select_provider_id(
             )
             matched, outcome = _match_outcome(entry.title, candidates)
             outcome = f"{outcome}; fallback={fallback!r}"
+    except ProviderError as error:
+        search_error = error
+        candidates = []
+        matched = None
+        outcome = f"deterministic search failed: {error}"
     if matched is None:
-        LOGGER.warning(
-            "metadata match path=%s provider=%s outcome=%s",
-            _log_value(entry.relative_path),
-            provider.name,
-            _log_value(outcome),
-        )
-        return None
+        if inference is None and search_error is not None:
+            raise search_error
+        inferred: InferenceResult | None = None
+        if inference is not None:
+            try:
+                inferred = _infer_entry(
+                    repository,
+                    entry,
+                    inference,
+                    cache_ttl=inference_cache_ttl,
+                    now=now,
+                )
+            except InferenceError as error:
+                LOGGER.warning(
+                    "model inference path=%s model=%s outcome=error error=%s",
+                    _log_value(entry.relative_path),
+                    inference.model,
+                    _log_value(str(error)),
+                )
+            if (
+                inferred is not None
+                and inferred.title_hint is not None
+                and inferred.confidence >= 0.8
+            ):
+                inferred_candidates = list(provider.search(inferred.title_hint))
+                matched, inferred_outcome = _match_outcome(
+                    inferred.title_hint, inferred_candidates
+                )
+                outcome = (
+                    f"{inferred_outcome}; model_hint confidence="
+                    f"{inferred.confidence:.3f}"
+                )
+                if matched is not None:
+                    LOGGER.info(
+                        "model inference path=%s model=%s outcome=accepted",
+                        _log_value(entry.relative_path),
+                        inference.model,
+                    )
+        if matched is None:
+            LOGGER.warning(
+                "metadata match path=%s provider=%s outcome=%s",
+                _log_value(entry.relative_path),
+                provider.name,
+                _log_value(outcome),
+            )
+            return None
     LOGGER.info(
         "metadata match path=%s provider=%s id=%s outcome=%s",
         _log_value(entry.relative_path),
@@ -506,6 +577,61 @@ def _select_provider_id(
         _log_value(outcome),
     )
     return matched.provider_id
+
+
+def _infer_entry(
+    repository: CatalogueRepository,
+    entry: LibraryEntry,
+    inference: OpenAIInferenceClient,
+    *,
+    cache_ttl: int,
+    now: datetime,
+) -> InferenceResult:
+    files = repository.list_media_files(entry.id)
+    unresolved = [media for media in files if media.episode_hint is None]
+    filenames = [media.filename for media in unresolved]
+    key_input = json.dumps(
+        {
+            "schema": INFERENCE_SCHEMA_VERSION,
+            "model": inference.model,
+            "title": entry.title,
+            "filenames": filenames,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    cache_key = hashlib.sha256(key_input).hexdigest()
+    cached = repository.get_inference_cache(cache_key)
+    result: InferenceResult
+    if cached is not None and cached[1] >= now - timedelta(seconds=cache_ttl):
+        try:
+            result = result_from_data(json.loads(cached[0]), filenames)
+        except (json.JSONDecodeError, InferenceError):
+            result = inference.infer(entry.title, filenames)
+        else:
+            LOGGER.info(
+                "model inference path=%s model=%s outcome=cache_hit",
+                _log_value(entry.relative_path),
+                inference.model,
+            )
+    else:
+        result = inference.infer(entry.title, filenames)
+    repository.put_inference_cache(
+        cache_key,
+        model=inference.model,
+        schema_version=INFERENCE_SCHEMA_VERSION,
+        result=result_data(result),
+        created_at=now,
+    )
+    by_name = {media.filename: media for media in unresolved}
+    for episode in result.episodes:
+        media = by_name.get(episode.filename)
+        if media is not None and episode.confidence >= 0.8:
+            repository.set_inferred_episode_hint(
+                media.id, episode.hint, episode.confidence
+            )
+    return result
 
 
 def _log_value(value: str) -> str:

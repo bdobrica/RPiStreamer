@@ -22,6 +22,7 @@ from typing import Final, TextIO, cast
 from rpi_streamer.config import Settings
 from rpi_streamer.database import CatalogueRepository, ScanRun
 from rpi_streamer.generator import GeneratedSite, generate_site
+from rpi_streamer.inference import OpenAIInferenceClient
 from rpi_streamer.metadata import JikanProvider, enrich_catalogue
 from rpi_streamer.scanner import scan_library
 
@@ -56,6 +57,16 @@ def run_once(settings: Settings) -> RunSummary:
         enrich = None
         if settings.metadata_provider == "jikan":
             provider = JikanProvider()
+            inference = (
+                OpenAIInferenceClient(
+                    settings.openai_api_key or "",
+                    model=settings.openai_model,
+                    timeout=settings.openai_timeout,
+                    max_calls=settings.openai_max_calls_per_scan,
+                )
+                if settings.openai_fallback_enabled
+                else None
+            )
 
             def enrich(
                 repository: CatalogueRepository, scanned_at: datetime
@@ -67,6 +78,8 @@ def run_once(settings: Settings) -> RunSummary:
                     state_dir=settings.state_dir,
                     download_artwork=settings.download_artwork,
                     metadata_language=settings.metadata_language,
+                    inference=inference,
+                    inference_cache_ttl=settings.openai_cache_ttl,
                     now=scanned_at,
                 ).errors
 

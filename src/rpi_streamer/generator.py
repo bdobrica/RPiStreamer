@@ -355,16 +355,16 @@ def _local_episode_player(local_files: Sequence[MediaFile]) -> str:
     if not local_files:
         return '<p class="muted">No playable local files are currently available.</p>'
     first = local_files[0]
-    first_name = first.filename
+    first_name = _episode_label(first)
     first_url = media_url(first.relative_path)
     options = "".join(
         f'<option value="{_attr(media_url(media.relative_path))}">'
-        f"{_text(media.filename)}</option>"
+        f"{_text(_episode_label(media))}</option>"
         for media in local_files
     )
     fallback_links = "".join(
         f'<li><a href="{_attr(media_url(media.relative_path))}">'
-        f"{_text(media.filename)}</a></li>"
+        f"{_text(_episode_label(media))}</a></li>"
         for media in local_files
     )
     disabled = " disabled" if len(local_files) == 1 else ""
@@ -386,6 +386,13 @@ def _local_episode_player(local_files: Sequence[MediaFile]) -> str:
         "<noscript><p>JavaScript is disabled. Choose an episode:</p>"
         f'<ul class="episode-links">{fallback_links}</ul></noscript></article>'
     )
+
+
+def _episode_label(media: MediaFile) -> str:
+    hint = media.episode_hint
+    if hint is None and (media.inference_confidence or 0) >= 0.8:
+        hint = media.inferred_episode_hint
+    return media.filename if hint is None else f"{hint} · {media.filename}"
 
 
 def _validated_artwork_source(artwork: Artwork, state_dir: Path) -> Path | None:

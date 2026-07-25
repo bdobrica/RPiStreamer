@@ -62,6 +62,10 @@ class NativeDeploymentTests(unittest.TestCase):
         text = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("pip install \\\n        --force-reinstall --no-deps", text)
         self.assertIn("if [ ! -e /etc/rpi-streamer/rpi-streamer.ini ]", text)
+        self.assertIn(
+            "chown root:rpi-streamer /etc/rpi-streamer/rpi-streamer.ini", text
+        )
+        self.assertIn("chmod 0640 /etc/rpi-streamer/rpi-streamer.ini", text)
         self.assertIn("nginx -t", text)
         self.assertIn("systemctl daemon-reload", text)
         self.assertIn("render-nginx", text)

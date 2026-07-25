@@ -13,6 +13,7 @@ from rpi_streamer.database import (
     ProviderEpisode,
     Relation,
 )
+from rpi_streamer.inference import SCHEMA_VERSION, OpenAIInferenceClient
 from rpi_streamer.metadata import (
     MAX_ARTWORK_BYTES,
     AnimeCandidate,
@@ -471,6 +472,80 @@ class EnrichmentTests(unittest.TestCase):
 
         self.assertEqual(result.enriched, 1)
         self.assertEqual(len(provider.search_calls), 2)
+
+    def test_model_hint_is_cached_and_revalidated_by_jikan_matching(self) -> None:
+        title = "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugi"
+        entry_id = self._entry(title)
+        self.repository.upsert_media_file(
+            library_entry_id=entry_id,
+            relative_path=f"{title}/release_01.mp4",
+            size_bytes=1,
+            mtime_ns=1,
+            episode_hint=None,
+            seen_at=NOW,
+        )
+        provider = FakeProvider()
+
+        def search(query: str) -> Sequence[AnimeCandidate]:
+            provider.search_calls.append(query)
+            if query.endswith("Tsurasugiru"):
+                return [AnimeCandidate("55842", query, ())]
+            return []
+
+        provider.search = search  # type: ignore[assignment]
+        calls: list[int] = []
+
+        def transport(_request: object, _timeout: float) -> bytes:
+            calls.append(1)
+            structured = {
+                "schema_version": SCHEMA_VERSION,
+                "title_hint": (
+                    "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugiru"
+                ),
+                "confidence": 0.98,
+                "reason": "Completed a likely truncated romanized title.",
+                "episodes": [
+                    {
+                        "filename": "release_01.mp4",
+                        "hint": "E1",
+                        "confidence": 0.96,
+                    }
+                ],
+            }
+            return json.dumps(
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(structured),
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ).encode()
+
+        inference = OpenAIInferenceClient("secret", max_calls=2, transport=transport)
+        result = enrich_catalogue(
+            self.repository,
+            provider,
+            refresh_interval=86400,
+            state_dir=self.root,
+            download_artwork=False,
+            inference=inference,
+            now=NOW,
+        )
+
+        self.assertEqual(result.enriched, 1)
+        self.assertEqual(calls, [1])
+        self.assertEqual(provider.detail_calls[0][0], "55842")
+        media = self.repository.list_media_files(entry_id)[0]
+        self.assertEqual(media.inferred_episode_hint, "E1")
+        self.assertEqual(media.episode_hint, None)
 
     def test_offline_error_does_not_remove_local_or_cached_state(self) -> None:
         entry_id = self._entry()

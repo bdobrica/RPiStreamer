@@ -157,6 +157,32 @@ stores conservative hints for a leading number or range, `S01E02` and episode
 ranges, and `OVA`/`OAD`/`ONA`/`Special` forms. It does not infer an episode
 number from an arbitrary number embedded in a title.
 
+### Optional OpenAI fallback
+
+Set `openai_fallback_enabled = true` to use `gpt-5.6-luna` only after a
+new title fails the pinned, cached, and deterministic Jikan matching paths.
+The model returns a strict, versioned JSON object containing a normalized
+search title and conservative episode hints. The normalized title is only a
+new Jikan search query: its candidate must still pass the existing score and
+ambiguity checks, and a model-produced MAL ID is never accepted. A manual
+`mal_id` remains authoritative.
+
+Only the relative title-directory name and at most 50 unresolved MP4 basenames
+are sent to OpenAI. MP4 contents, absolute paths, sidecars, SQLite data,
+provider metadata, and API keys are not included in prompts. Requests use the
+[Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
+with `store = false`, strict Structured Outputs, a 2,000-token output ceiling,
+a 128 KiB response ceiling, a 30-second default timeout, and a per-scan call
+budget. Authentication, quota, timeout, refusal, malformed output, and
+provider failures are non-fatal.
+
+Validated results are cached in SQLite by a SHA-256 digest of the bounded
+input, model, and schema version. The default cache lifetime is 90 days, so
+ordinary `SIGHUP` rescans do not repeatedly incur API usage. Filename-derived
+episode hints remain separate and take precedence; a model hint is displayed
+only at confidence `0.8` or higher, while the filename and media URL stay
+authoritative.
+
 An optional UTF-8 `rpi-streamer.ini` in a title directory supports:
 
 ```ini
@@ -275,6 +301,12 @@ metadata_provider = jikan
 metadata_refresh_interval = 30d
 metadata_language = en
 download_artwork = true
+openai_fallback_enabled = false
+openai_api_key =
+openai_model = gpt-5.6-luna
+openai_timeout = 30s
+openai_max_calls_per_scan = 3
+openai_cache_ttl = 90d
 log_level = INFO
 ```
 
@@ -289,6 +321,12 @@ log_level = INFO
 | `metadata_refresh_interval` | `RPI_STREAMER_METADATA_REFRESH_INTERVAL` | Maximum metadata cache age |
 | `metadata_language` | `RPI_STREAMER_METADATA_LANGUAGE` | Preferred display-title language |
 | `download_artwork` | `RPI_STREAMER_DOWNLOAD_ARTWORK` | Cache covers locally |
+| `openai_fallback_enabled` | `RPI_STREAMER_OPENAI_FALLBACK_ENABLED` | Enable model-assisted title/episode inference |
+| `openai_api_key` | `RPI_STREAMER_OPENAI_API_KEY` | OpenAI API key; environment overrides INI |
+| `openai_model` | `RPI_STREAMER_OPENAI_MODEL` | Responses API model; defaults to `gpt-5.6-luna` |
+| `openai_timeout` | `RPI_STREAMER_OPENAI_TIMEOUT` | Per-request timeout |
+| `openai_max_calls_per_scan` | `RPI_STREAMER_OPENAI_MAX_CALLS_PER_SCAN` | Paid-call budget for one scan |
+| `openai_cache_ttl` | `RPI_STREAMER_OPENAI_CACHE_TTL` | Successful/uncertain inference cache lifetime |
 | `log_level` | `RPI_STREAMER_LOG_LEVEL` | Application log verbosity |
 
 Durations accept a non-negative integer with an optional `s`, `m`, `h`, or `d`
@@ -303,6 +341,8 @@ Configuration validation currently enforces:
 - state, site, and database paths outside the media root;
 - `jikan` or `none` as the metadata provider;
 - a positive metadata refresh interval and a non-negative scan interval;
+- a key, positive timeout/call budget, valid model name, and positive cache
+  lifetime when the OpenAI fallback is enabled;
 - a short language identifier and a standard Python log level;
 - known INI sections and keys, so misspellings fail at startup.
 
@@ -316,8 +356,21 @@ rpi-streamer --config ./config/rpi-streamer.ini.example validate-config
 RPI_STREAMER_CONFIG=/path/to/rpi-streamer.ini rpi-streamer validate-config
 ```
 
-The current settings contain no secrets; diagnostic output is designed to
-remain safe if secret settings are introduced later.
+`validate-config` never prints the API key; it emits `[configured]` instead.
+Keeping the key in `/etc/rpi-streamer/rpi-streamer.ini` is supported. Native
+installation/update sets that file to `root:rpi-streamer` mode `0640`, allowing
+the unprivileged service to read it without making it world-readable:
+
+```ini
+[rpi-streamer]
+openai_fallback_enabled = true
+openai_api_key = sk-proj-...
+```
+
+The normal backup archive includes this INI file, so protect backup files as
+credentials too. For containers, prefer supplying
+`RPI_STREAMER_OPENAI_API_KEY` at runtime and do not commit it to Compose,
+Dockerfiles, or `.env`.
 
 ## Process lifecycle
 
@@ -706,13 +759,14 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 3 contains:
+Schema version 4 contains:
 
 | Table | Stored data |
 |---|---|
 | `schema_migrations` | Applied forward-only schema versions and UTC timestamps |
 | `library_entries` | Title folders, display/sort titles, availability, and metadata overrides |
-| `media_files` | Relative MP4 paths, filesystem identity, size/mtime, episode hints, and availability |
+| `media_files` | Relative MP4 paths, filesystem identity, size/mtime, deterministic and inferred episode hints, and availability |
+| `inference_cache` | Digest-keyed structured model results, model/schema version, and timestamp |
 | `provider_records` | Normalized title details, provider IDs, cache validators, refresh time, and compact raw detail JSON |
 | `provider_episodes` | Provider episode number, title, air date, filler, and recap flags |
 | `aliases` | Provider title aliases by type |
