@@ -7,6 +7,7 @@ import html
 import os
 import shutil
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -18,6 +19,7 @@ from rpi_streamer.database import (
     Artwork,
     CatalogueRepository,
     LibraryEntry,
+    MediaFile,
     ProviderRecord,
     ScanRun,
 )
@@ -117,6 +119,7 @@ def _render(
     (output / "genres").mkdir()
     (output / "assets" / "covers").mkdir(parents=True)
     style_name = _copy_versioned_asset("style.css", output / "assets")
+    episode_script_name = _copy_versioned_asset("episode-player.js", output / "assets")
 
     entries = repository.list_library_entries()
     views: list[TitleView] = []
@@ -165,6 +168,7 @@ def _render(
             output / "titles" / f"{view.slug}.html",
             scan_status,
             style_name,
+            episode_script_name,
         )
 
     sorted_genres = sorted(genre_members, key=str.casefold)
@@ -231,23 +235,11 @@ def _render_title(
     destination: Path,
     scan_status: str,
     style_name: str,
+    episode_script_name: str,
 ) -> None:
     entry, record = view.entry, view.record
     local_files = repository.list_media_files(entry.id)
-    local_episode_blocks = []
-    for media in local_files:
-        url = _attr(media_url(media.relative_path))
-        local_episode_blocks.append(
-            '<article class="episode">'
-            f"<h3>{_text(media.filename)}</h3>"
-            f'<video controls preload="metadata" src="{url}">'
-            "<p>Your browser cannot play this video. "
-            f'<a href="{url}">Download the file</a>.'
-            "</p></video></article>"
-        )
-    local_episodes = "".join(local_episode_blocks) or (
-        '<p class="muted">No playable local files are currently available.</p>'
-    )
+    local_episodes = _local_episode_player(local_files)
 
     genres = (
         '<ul class="tag-list" aria-label="Genres">'
@@ -320,6 +312,11 @@ def _render_title(
         local_episodes=local_episodes,
         provider_episodes=provider_episodes,
         relations=relations,
+        episode_script=(
+            f'<script defer src="../assets/{_attr(episode_script_name)}"></script>'
+            if local_files
+            else ""
+        ),
     )
     _write_page(
         destination,
@@ -352,6 +349,43 @@ def _copy_cover(
     name = f"{record.provider}-{record.provider_id}-{digest}{suffix}"
     shutil.copyfile(source, output / "assets" / "covers" / name)
     return name
+
+
+def _local_episode_player(local_files: Sequence[MediaFile]) -> str:
+    if not local_files:
+        return '<p class="muted">No playable local files are currently available.</p>'
+    first = local_files[0]
+    first_name = first.filename
+    first_url = media_url(first.relative_path)
+    options = "".join(
+        f'<option value="{_attr(media_url(media.relative_path))}">'
+        f"{_text(media.filename)}</option>"
+        for media in local_files
+    )
+    fallback_links = "".join(
+        f'<li><a href="{_attr(media_url(media.relative_path))}">'
+        f"{_text(media.filename)}</a></li>"
+        for media in local_files
+    )
+    disabled = " disabled" if len(local_files) == 1 else ""
+    return (
+        '<article class="episode">'
+        '<div class="episode-controls">'
+        '<button type="button" data-episode-previous disabled>Previous</button>'
+        '<label for="episode-select">Episode'
+        f'<select id="episode-select" data-episode-select>{options}</select></label>'
+        f'<button type="button" data-episode-next{disabled}>Next</button></div>'
+        f"<h3 data-episode-heading>{_text(first_name)}</h3>"
+        '<p class="muted" data-episode-status aria-live="polite">'
+        f"Selected {_text(first_name)}</p>"
+        f'<video controls preload="metadata" src="{_attr(first_url)}" '
+        "data-episode-player>"
+        "<p>Your browser cannot play this video. "
+        f'<a href="{_attr(first_url)}">Download the file</a>.'
+        "</p></video>"
+        "<noscript><p>JavaScript is disabled. Choose an episode:</p>"
+        f'<ul class="episode-links">{fallback_links}</ul></noscript></article>'
+    )
 
 
 def _validated_artwork_source(artwork: Artwork, state_dir: Path) -> Path | None:

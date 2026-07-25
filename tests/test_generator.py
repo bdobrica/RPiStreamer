@@ -147,6 +147,9 @@ class GeneratorTests(unittest.TestCase):
             1,
         )
         self.assertEqual(len(tuple((self.site / "assets").glob("style-*.css"))), 1)
+        self.assertEqual(
+            len(tuple((self.site / "assets").glob("episode-player-*.js"))), 1
+        )
         self.assertTrue(
             (self.site / "genres" / f"{genre_slug('Sci-Fi')}.html").is_file()
         )
@@ -251,6 +254,31 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn('<main id="content">', page)
         self.assertIn("<h1>Anime titles</h1>", page)
         self.assertNotIn("<script", page.casefold())
+
+    def test_many_local_episodes_render_one_player_and_navigation(self) -> None:
+        entry_id = self._entry("Series", "Series", filename="01.mp4")
+        self.repository.upsert_media_file(
+            library_entry_id=entry_id,
+            relative_path="Series/02 & finale.mp4",
+            size_bytes=5,
+            mtime_ns=11,
+            local_identity="1:finale",
+            seen_at=NOW,
+        )
+
+        generate_site(self.repository, site_dir=self.site, state_dir=self.state)
+
+        entry = self.repository.get_library_entry_by_id(entry_id)
+        assert entry is not None
+        page = (self.site / "titles" / f"{title_slug(entry)}.html").read_text()
+        self.assertEqual(page.count("<video "), 1)
+        self.assertIn("data-episode-select", page)
+        self.assertIn("data-episode-previous", page)
+        self.assertIn("data-episode-next", page)
+        self.assertIn("02 &amp; finale.mp4", page)
+        self.assertIn("02%20%26%20finale.mp4", page)
+        self.assertIn("<noscript>", page)
+        self.assertRegex(page, r"assets/episode-player-[0-9a-f]{16}\.js")
 
 
 class UrlAndSlugTests(unittest.TestCase):

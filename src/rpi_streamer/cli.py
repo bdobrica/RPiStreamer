@@ -14,6 +14,7 @@ from rpi_streamer.config import (
     configure_logging,
     load_settings,
 )
+from rpi_streamer.nginx import render_nginx, write_nginx
 from rpi_streamer.service import AlreadyRunningError, InstanceLock, Service, run_once
 
 EXIT_OK = 0
@@ -53,6 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
         "healthcheck",
         help="check whether the long-running indexer is healthy",
     )
+    nginx_parser = subparsers.add_parser(
+        "render-nginx",
+        help="render Nginx configuration from resolved settings",
+    )
+    nginx_parser.add_argument("--listen", default="127.0.0.1:8080")
+    nginx_parser.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -72,6 +79,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
     if args.command == "healthcheck":
         return _healthcheck(settings.state_dir / "status.json")
+    if args.command == "render-nginx":
+        try:
+            write_nginx(args.output, render_nginx(settings, args.listen))
+        except (OSError, ValueError) as error:
+            print(f"rpi-streamer: cannot render Nginx config: {error}", file=sys.stderr)
+            return EXIT_USAGE
+        return EXIT_OK
     if args.command == "scan":
         try:
             with InstanceLock(settings.state_dir):

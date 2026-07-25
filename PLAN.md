@@ -19,7 +19,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 7 | Nginx streaming configuration | Done | Hardened template and conditional range/seek integration suite; 82 offline tests pass |
 | 8 | Native packaging and systemd deployment | Done | Wheel installer, hardened unit, account/state declarations, and deployment audits |
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
-| 10 | Deployment feedback remediation | Pending | Matching, episode navigation, configurable media paths, and Make-based lifecycle pass |
+| 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
 | 11 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
 
 ## Decisions recorded
@@ -53,6 +53,11 @@ and one focused commit. Status values are **Pending**, **In progress**,
     resolve the active Python interpreter and allow an explicit override; they
     must not assume a virtual-environment name. The service executable remains
     explicit and is validated for access by the system account.
+12. **Model-assisted inference stays optional.** A future OpenAI fallback may
+    propose normalized titles or search hints after deterministic matching
+    fails, but must use structured output, bounded calls, cached results, and a
+    protected environment/credential secret. It may not silently override a
+    pinned MAL ID or treat an inferred ID as verified metadata.
 
 ## Step 0 — Architecture and project plan
 
@@ -446,7 +451,7 @@ multi-platform push remains a registry/Buildx operator acceptance step.
 
 ## Step 10 — Deployment feedback remediation
 
-**Status: Pending**
+**Status: Done**
 
 Address issues found on the first Raspberry Pi deployment. Implement the
 following substeps in order; keep the row above **Pending** until all four
@@ -454,10 +459,10 @@ substeps and the upgrade exercise pass.
 
 | Substep | Change | Status | Acceptance evidence |
 |---:|---|---|---|
-| 10.1 | Metadata search resilience and diagnostics | Pending | Okinawa regression fixture matches MAL ID 55842; unmatched reasons are observable |
-| 10.2 | Single-player episode navigation | Pending | One player, selector, and previous/next controls work with and without JavaScript |
-| 10.3 | Config-driven native Nginx media root | Pending | `/mnt/media` is rendered from resolved config and passes Nginx/range tests |
-| 10.4 | Root Make install and update workflow | Pending | Clean install and in-place update run from repository root with caller-selected Python |
+| 10.1 | Metadata search resilience and diagnostics | Done | Okinawa regression fixture matches MAL ID 55842; bounded fallback and outcomes tested |
+| 10.2 | Single-player episode navigation | Done | One player, selector, previous/next controls, fragment, and no-JS links generated |
+| 10.3 | Config-driven native Nginx media root | Done | `/mnt/media` and spaced paths render from resolved config; unsafe paths fail |
+| 10.4 | Root Make install and update workflow | Done | Root Make targets use selected Python, consistent artifacts, backup, and conservative uninstall |
 
 ### 10.1 — Metadata search resilience and diagnostics
 
@@ -564,9 +569,9 @@ substeps and the upgrade exercise pass.
   `--break-system-packages`.
 - Before changing the host, preflight the executable, configuration, service
   account access, Nginx availability, and media path. In particular, detect a
-  selected executable below a home directory that conflicts with
-  `ProtectHome=true`; require an explicit safe location or documented hardening
-  override rather than installing a service that cannot start.
+  selected executable cannot be traversed by the service account.
+  `ProtectHome=read-only` permits a caller-selected home venv without allowing
+  service writes, but ordinary Unix permissions still apply.
 - Make `install` idempotent and preserve existing INI/state. Make `update`
   create a state/config backup, install the new wheel and deployment assets,
   validate configuration and Nginx, then restart. On failure, restore the
@@ -594,6 +599,26 @@ rollback, and legacy-upgrade workflow. Mark Step 10 and all substeps Done only
 after the deployed Raspberry Pi acceptance check; commit as
 `fix: address initial deployment feedback`.
 
+**Delivered:** high-confidence matching now performs at most one long-title
+prefix retry and emits actionable match outcomes; the reported Okinawa name
+has a MAL `55842` regression test and documented sidecar override. Generated
+title pages contain one player with accessible selector/previous/next controls,
+fragment selection, escaped URLs, and no-JavaScript links. A packaged CLI
+renderer produces Nginx configuration from resolved `media_root` and
+`site_dir`, with atomic writes, path validation, and installer rollback after
+failed syntax checks. Root Make targets build into `deployment/dist`, use the
+caller's `PYTHON`, pass the selected executable across sudo, back up before
+updates, validate, restart, and conservatively uninstall. Ninety-eight offline
+tests pass; conditional systemd/Nginx/live-Jikan checks remain environment
+dependent. The supplied private-LAN host was unreachable from the execution
+environment, and the single live Jikan diagnostic returned HTTP 504, so the
+deployed browser/update acceptance should be repeated on the Raspberry Pi.
+
+The suggested GPT-5.6 Luna inference fallback is intentionally deferred to a
+separate credentialed extension: no API key was available to exercise it, and
+secrets must not be stored in the ordinary INI. It should use the Responses API
+with strict structured output only after deterministic Jikan matching fails.
+
 ## Step 11 — End-to-end hardening and first release
 
 **Status: Pending**
@@ -613,7 +638,8 @@ Close cross-component gaps and prepare a maintainable first release.
 - Establish semantic versioning, changelog, support matrix, contribution guide,
   and release checklist.
 - Record known limitations and deferred features (dynamic API, search index,
-  other metadata providers, non-MP4 formats).
+  optional model-assisted title inference, other metadata providers, non-MP4
+  formats).
 
 **Tests and acceptance**
 

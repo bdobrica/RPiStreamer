@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import time
@@ -37,6 +38,7 @@ MATCH_MARGIN: Final = 0.08
 _TRANSIENT_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
 _IMAGE_TYPES: Final = frozenset({"image/gif", "image/jpeg", "image/png", "image/webp"})
 _WORD_RE: Final = re.compile(r"[a-z0-9]+")
+LOGGER = logging.getLogger(__name__)
 
 
 class ProviderError(RuntimeError):
@@ -363,6 +365,32 @@ def match_candidate(
     return scored[0][2]
 
 
+def _match_outcome(
+    title: str,
+    candidates: Sequence[AnimeCandidate],
+) -> tuple[AnimeCandidate | None, str]:
+    target = normalize_title(title)
+    scored = sorted(
+        (
+            max(_title_score(target, normalize_title(name)) for name in _names(item)),
+            item.provider_id,
+            item,
+        )
+        for item in candidates
+    )
+    scored.sort(key=lambda value: (-value[0], value[1]))
+    if not scored:
+        return None, "no search results"
+    if scored[0][0] < MATCH_THRESHOLD:
+        return None, f"best score {scored[0][0]:.3f} is below threshold"
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < MATCH_MARGIN:
+        return None, (
+            f"ambiguous candidates {scored[0][2].provider_id} and "
+            f"{scored[1][2].provider_id}"
+        )
+    return scored[0][2], f"matched score {scored[0][0]:.3f}"
+
+
 def enrich_catalogue(
     repository: CatalogueRepository,
     provider: AnimeProvider,
@@ -439,14 +467,49 @@ def _select_provider_id(
     record: ProviderRecord | None,
 ) -> str | None:
     if entry.pinned_provider == provider.name and entry.pinned_provider_id:
+        LOGGER.info(
+            "metadata match path=%s provider=%s id=%s outcome=pinned",
+            _log_value(entry.relative_path),
+            provider.name,
+            entry.pinned_provider_id,
+        )
         return entry.pinned_provider_id
     if record is not None:
         return record.provider_id
-    return (
-        matched.provider_id
-        if (matched := match_candidate(entry.title, provider.search(entry.title)))
-        else None
+    candidates = list(provider.search(entry.title))
+    matched, outcome = _match_outcome(entry.title, candidates)
+    if matched is None:
+        words = entry.title.split()
+        if len(words) >= 5:
+            fallback = " ".join(words[:-1])
+            seen = {candidate.provider_id for candidate in candidates}
+            candidates.extend(
+                candidate
+                for candidate in provider.search(fallback)
+                if candidate.provider_id not in seen
+            )
+            matched, outcome = _match_outcome(entry.title, candidates)
+            outcome = f"{outcome}; fallback={fallback!r}"
+    if matched is None:
+        LOGGER.warning(
+            "metadata match path=%s provider=%s outcome=%s",
+            _log_value(entry.relative_path),
+            provider.name,
+            _log_value(outcome),
+        )
+        return None
+    LOGGER.info(
+        "metadata match path=%s provider=%s id=%s outcome=%s",
+        _log_value(entry.relative_path),
+        provider.name,
+        matched.provider_id,
+        _log_value(outcome),
     )
+    return matched.provider_id
+
+
+def _log_value(value: str) -> str:
+    return "".join(char if char.isprintable() else "?" for char in value)
 
 
 def _store_details(

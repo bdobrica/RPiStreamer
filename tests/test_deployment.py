@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 UNIT = ROOT / "deployment" / "systemd" / "rpi-streamer.service"
 INSTALLER = ROOT / "deployment" / "install.sh"
+MAKEFILE = ROOT / "Makefile"
 
 
 class NativeDeploymentTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class NativeDeploymentTests(unittest.TestCase):
             "NoNewPrivileges=true",
             "PrivateTmp=true",
             "ProtectSystem=strict",
-            "ProtectHome=true",
+            "ProtectHome=read-only",
             "ReadWritePaths=/var/lib/rpi-streamer",
             "UMask=0027",
         )
@@ -63,6 +64,26 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn("if [ ! -e /etc/rpi-streamer/rpi-streamer.ini ]", text)
         self.assertIn("nginx -t", text)
         self.assertIn("systemctl daemon-reload", text)
+        self.assertIn("render-nginx", text)
+        self.assertNotIn("s|__MEDIA_ROOT__|/mnt/anime/", text)
+        self.assertIn("runuser -u rpi-streamer", text)
+
+    def test_root_makefile_uses_selected_python_and_consistent_dist_path(self) -> None:
+        text = MAKEFILE.read_text(encoding="utf-8")
+        self.assertIn("PYTHON ?= python3", text)
+        self.assertIn("deployment/dist", text)
+        self.assertIn('"$(PYTHON)" -m pip', text)
+        self.assertIn("SERVICE_EXECUTABLE", text)
+        self.assertIn("MEDIA_ROOT ?= /mnt/anime", text)
+        for target in (
+            "help:",
+            "install:",
+            "update:",
+            "backup:",
+            "validate:",
+            "uninstall:",
+        ):
+            self.assertIn(target, text)
 
     @unittest.skipUnless(
         shutil.which("systemd-analyze"), "systemd-analyze is not installed"

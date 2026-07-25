@@ -10,7 +10,7 @@ Nginx to serve.
 The project is intended to run comfortably on a Raspberry Pi. It does not
 transcode video, manage users, or expose a public internet service.
 
-> **Project status:** Steps 1–9 are complete. The installable CLI,
+> **Project status:** Steps 1–10 are complete. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
 > scanner with cached Jikan enrichment and atomic static catalogue generation
 > are available with periodic and signal-triggered service operation and an
@@ -94,6 +94,10 @@ Unicode, case, punctuation, and whitespace, then scores the canonical and
 alias titles. A candidate must score at least `0.88` and lead the next result
 by at least `0.08`; otherwise the title remains visibly unmatched rather than
 being assigned speculatively. Equal top results are always ambiguous.
+When a long title has no confident match, one bounded retry drops its final
+word and ranks the combined candidates. This handles near-canonical folder
+names such as `... Tsurasugi` versus MAL's `... Tsurasugiru` without lowering
+the safety threshold globally.
 
 The selected anime's title, synopsis, episode count and episode rows, aliases,
 genres, anime relations, raw diagnostic response, validators, and cover
@@ -107,6 +111,16 @@ matching English (`en`/`eng`) or Japanese (`ja`/`jp`/`jpn`) alias, falling back
 to Jikan's default title. A sidecar `mal_id` bypasses search and confidence
 matching. `metadata_enabled = false` prevents all metadata requests for that
 folder.
+
+Match decisions are logged with the local path, provider, selected ID and
+score, or a reason such as no results, below threshold, ambiguity, or a pinned
+sidecar. Provider failures are reported separately. For the reported Okinawa
+title, the deterministic override is:
+
+```ini
+[rpi-streamer]
+mal_id = 55842
+```
 
 When enabled, covers are limited to HTTP(S), known image MIME types, and 5 MiB.
 They are atomically cached under `state_dir/artwork`; a failed download stores
@@ -165,17 +179,22 @@ it.
 
 ## Generated catalogue
 
-The implemented UI is server-rendered static HTML with no JavaScript, frontend
-build tool, CDN, or request-time Python process:
+The implemented UI is server-rendered static HTML with one small,
+dependency-free local JavaScript controller and no frontend build tool, CDN,
+or request-time Python process:
 
 - a home page with title cards, cover images, and scan status;
 - a folder/title page with metadata and locally available MP4 episodes;
 - genre pages and links between known prequels and sequels;
 - semantic breadcrumbs and primary navigation;
-- an HTML5 `<video controls preload="metadata">` player;
+- one HTML5 `<video controls preload="metadata">` player per title page;
+- Previous/Next buttons and an episode dropdown that change its source without
+  autoplaying;
 - graceful placeholders when metadata or artwork is unavailable.
 
-Only currently available local files receive players. Provider episode rows
+The first local episode remains playable without JavaScript, and a `<noscript>`
+list links to every other local episode. A fragment such as `#episode-3`
+selects an episode when JavaScript is available. Provider episode rows
 are shown in a separate reference table and never imply local availability.
 All user-controlled filenames and remote text are HTML-escaped. Every media
 path segment is URL-encoded and rooted below `/media/`; remote artwork URLs are
@@ -216,7 +235,7 @@ subsequent successful builds, the formerly published tree is retained as
 the currently published site intact. Output bytes are deterministic when the
 catalogue and cached assets are unchanged.
 
-CSS and validated cover images have content-derived filenames. This lets Nginx
+CSS, JavaScript, and validated cover images have content-derived filenames. This lets Nginx
 cache them as immutable for a year without serving stale content after a
 change. HTML retains stable URLs and is always revalidated.
 
@@ -321,9 +340,11 @@ The installed CLI provides the planned foreground and one-shot command names:
 rpi-streamer serve
 rpi-streamer scan
 rpi-streamer validate-config
+rpi-streamer healthcheck
+rpi-streamer render-nginx --listen HOST:PORT --output PATH
 ```
 
-All three commands are operational. `scan`
+All commands are operational. `scan`
 creates/migrates the configured database, reconciles and enriches the
 collection, atomically regenerates `site_dir`, prints a compact scan/page
 summary, and returns `0` for a complete scan or `3` for a partial scan or
@@ -346,32 +367,19 @@ be triggerable with `kill -HUP "$(pidof rpi-streamer)"` where appropriate.
 
 ## Nginx streaming setup
 
-The site template is
-[`deployment/nginx/rpi-streamer.conf.template`](deployment/nginx/rpi-streamer.conf.template).
-It has three placeholders:
-
-| Placeholder | Example | Meaning |
-|---|---|---|
-| `__LISTEN__` | `192.168.1.20:8080` | LAN address and TCP port |
-| `__SITE_ROOT__` | `/var/lib/rpi-streamer/site/` | Generated catalogue root, with trailing slash |
-| `__MEDIA_ROOT__` | `/mnt/anime/` | Media alias root, with trailing slash |
-
-Copy the template, replace every placeholder, and validate it before enabling
-the site. For a Debian/Raspberry Pi OS installation:
+Native installation renders Nginx from the same resolved configuration as the
+indexer, so `media_root` and `site_dir` cannot drift. To inspect a candidate
+without installing it:
 
 ```bash
-sudo cp deployment/nginx/rpi-streamer.conf.template \
-  /etc/nginx/sites-available/rpi-streamer.conf
-sudo sed -i \
-  -e 's|__LISTEN__|192.168.1.20:8080|g' \
-  -e 's|__SITE_ROOT__|/var/lib/rpi-streamer/site/|g' \
-  -e 's|__MEDIA_ROOT__|/mnt/anime/|g' \
-  /etc/nginx/sites-available/rpi-streamer.conf
-sudo ln -s /etc/nginx/sites-available/rpi-streamer.conf \
-  /etc/nginx/sites-enabled/rpi-streamer.conf
-sudo nginx -t
-sudo systemctl reload nginx
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini render-nginx \
+  --listen 192.168.11.111:80 --output /tmp/rpi-streamer.conf
 ```
+
+The renderer accepts absolute paths with spaces and rejects control characters
+and Nginx-significant path characters. The installer publishes the candidate,
+runs `nginx -t`, and restores the previous site configuration if validation
+fails.
 
 Choose the host's actual private-LAN address; do not use `0.0.0.0` unless a
 firewall restricts the port to trusted subnets. Do not port-forward the
@@ -410,31 +418,38 @@ stopped because Nginx reads only the last published static tree.
 
 ## Native Debian/Raspberry Pi OS deployment
 
-The native artifact is a Python wheel plus the versioned files under
-[`deployment/`](deployment/). The installer creates a dedicated virtual
-environment instead of modifying the OS Python installation. On a clean
-Debian 12 or Raspberry Pi OS Bookworm host, install the OS prerequisites and
-build the wheel:
+Run all Make commands from the repository root. The Makefile uses the active
+`python3` by default and never assumes a virtual-environment name. Override it
+with an absolute interpreter when desired. On a clean Debian 12 or Raspberry
+Pi OS Bookworm host:
 
 ```bash
 sudo apt update
 sudo apt install python3 python3-venv nginx
-python3 -m venv .build-venv
-.build-venv/bin/python -m pip install --upgrade pip
-.build-venv/bin/python -m pip wheel --no-deps --wheel-dir dist .
+python3 -m venv /opt/rpi-streamer-env
+sudo chown "$USER" /opt/rpi-streamer-env
+/opt/rpi-streamer-env/bin/python -m pip install --upgrade pip
+make install PYTHON=/opt/rpi-streamer-env/bin/python \
+  LISTEN=192.168.11.111:80 MEDIA_ROOT=/mnt/media
 ```
 
-Run the installer with the wheel path and the host's private-LAN listen
-address. It is intentionally not enabled automatically, so configuration and
-permissions can be checked first:
+`make install` builds into `deployment/dist/`, installs the wheel with the
+selected interpreter before sudo, and passes that environment's console script
+to the systemd installer. It preserves an existing INI and state. Review the
+configuration before enabling services:
 
 ```bash
-sudo deployment/install.sh dist/rpi_streamer-*.whl 192.168.1.20:8080
 sudoedit /etc/rpi-streamer/rpi-streamer.ini
-sudo -u rpi-streamer \
-  /opt/rpi-streamer/venv/bin/rpi-streamer validate-config
-sudo nginx -t
+make validate PYTHON=/opt/rpi-streamer-env/bin/python
+sudo systemctl enable --now rpi-streamer nginx
 ```
+
+An activated environment works with plain `make install`. A system Python can
+also be selected, but distributions enforcing PEP 668 may reject installation;
+create a venv instead of using `--break-system-packages`. The selected console
+script must be executable by the `rpi-streamer` account. `ProtectHome=read-only`
+prevents service writes below home directories, while normal Unix traversal
+permissions still apply; `/opt` is the simplest production location.
 
 The installed layout is:
 
@@ -442,7 +457,7 @@ The installed layout is:
 /etc/rpi-streamer/rpi-streamer.ini
 /etc/nginx/sites-available/rpi-streamer.conf
 /etc/systemd/system/rpi-streamer.service
-/opt/rpi-streamer/venv/
+/opt/rpi-streamer-env/       # example; the selected environment is configurable
 /var/lib/rpi-streamer/
 ```
 
@@ -458,19 +473,18 @@ media tree; neither needs write permission there. One suitable ownership model
 is a trusted administrator as owner and `rpi-streamer` as the reader group:
 
 ```bash
-sudo chgrp -R rpi-streamer /mnt/anime
-sudo find /mnt/anime -type d -exec chmod 0750 '{}' +
-sudo find /mnt/anime -type f -exec chmod 0640 '{}' +
-namei -l /mnt/anime
-sudo -u rpi-streamer find /mnt/anime -type f -name '*.mp4' -print -quit
-sudo -u www-data find /mnt/anime -type f -name '*.mp4' -print -quit
+sudo chgrp -R rpi-streamer /mnt/media
+sudo find /mnt/media -type d -exec chmod 0750 '{}' +
+sudo find /mnt/media -type f -exec chmod 0640 '{}' +
+namei -l /mnt/media
+sudo -u rpi-streamer find /mnt/media -type f -name '*.mp4' -print -quit
+sudo -u www-data find /mnt/media -type f -name '*.mp4' -print -quit
 ```
 
 Review these recursive permission commands before using them if the mount is
 shared with other applications. Group membership avoids making the collection
-world-readable or writable. Keep native media outside `/home`: the unit's
-`ProtectHome=true` intentionally makes home directories inaccessible. The
-whole service filesystem is read-only under `ProtectSystem=strict`, with only
+world-readable or writable. The whole service filesystem is read-only under
+`ProtectSystem=strict`, with only
 `/var/lib/rpi-streamer` admitted through `ReadWritePaths`. `StateDirectory`
 creates that path as `rpi-streamer:rpi-streamer` mode `0750`, and `UMask=0027`
 makes generated pages group-readable for Nginx.
@@ -504,15 +518,21 @@ to finish cleanly during shutdown.
 
 ### Upgrade, backup, rollback, and uninstall
 
-Build a new wheel from the desired revision and rerun `deployment/install.sh`;
-it upgrades the isolated environment and preserves the INI. Then validate and
-restart:
+From the updated repository root, upgrade the selected environment and
+deployment assets, validate, and restart with:
 
 ```bash
-sudo -u rpi-streamer \
-  /opt/rpi-streamer/venv/bin/rpi-streamer validate-config
-sudo systemctl restart rpi-streamer
+make update PYTHON=/opt/rpi-streamer-env/bin/python \
+  LISTEN=192.168.11.111:80
+make validate PYTHON=/opt/rpi-streamer-env/bin/python
 ```
+
+For a legacy Step 8 installation, use
+`PYTHON=/opt/rpi-streamer/venv/bin/python`; its existing environment, INI,
+SQLite database, generated site, and service enablement are retained. Set
+`media_root = /mnt/media` before the update. Nginx is regenerated from that
+INI, and a failed syntax check restores the previous site configuration. On an
+existing installation, `MEDIA_ROOT` does not override the preserved INI.
 
 For a consistent backup, briefly stop writes and archive the complete state
 (database, artwork, status, and last generated site):
@@ -529,17 +549,11 @@ service. A version rollback uses the same installer with an older wheel.
 Database migrations are forward-only, so restore the backup taken before an
 upgrade if the older version does not understand the newer schema.
 
-To uninstall the executable and service while retaining the collection and
-state:
+To uninstall service assets while retaining the collection, configuration,
+state, environment, and account:
 
 ```bash
-sudo systemctl disable --now rpi-streamer
-sudo rm /etc/systemd/system/rpi-streamer.service
-sudo rm /etc/nginx/sites-enabled/rpi-streamer.conf
-sudo rm /etc/nginx/sites-available/rpi-streamer.conf
-sudo rm -r /opt/rpi-streamer
-sudo systemctl daemon-reload
-sudo systemctl reload nginx
+make uninstall
 ```
 
 `/etc/rpi-streamer`, `/var/lib/rpi-streamer`, and the system account are

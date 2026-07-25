@@ -38,7 +38,7 @@ rpi-streamer = "rpi_streamer.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-rpi_streamer = ["templates/*.html", "static/*.css"]
+rpi_streamer = ["templates/*.html", "static/*.css", "static/*.js", "nginx/*.template"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

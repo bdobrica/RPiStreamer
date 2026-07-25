@@ -270,6 +270,20 @@ class MatchingTests(unittest.TestCase):
             )
         )
 
+    def test_near_canonical_okinawa_title_matches_reported_mal_entry(self) -> None:
+        candidate = AnimeCandidate(
+            "55842",
+            "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugiru",
+            (),
+        )
+        self.assertEqual(
+            match_candidate(
+                "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugi",
+                [candidate],
+            ),
+            candidate,
+        )
+
 
 class FakeProvider:
     name = "jikan"
@@ -427,6 +441,36 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(result.disabled, 1)
         self.assertEqual(provider.search_calls, [])
         self.assertEqual(provider.detail_calls[0][0], "99")
+
+    def test_long_title_uses_one_bounded_prefix_fallback(self) -> None:
+        title = "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugi"
+        self._entry(title)
+        provider = FakeProvider()
+
+        def search(query: str) -> Sequence[AnimeCandidate]:
+            provider.search_calls.append(query)
+            if len(provider.search_calls) == 1:
+                return []
+            return [
+                AnimeCandidate(
+                    "1",
+                    "Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugiru",
+                    (),
+                )
+            ]
+
+        provider.search = search  # type: ignore[assignment]
+        result = enrich_catalogue(
+            self.repository,
+            provider,
+            refresh_interval=86400,
+            state_dir=self.root,
+            download_artwork=False,
+            now=NOW,
+        )
+
+        self.assertEqual(result.enriched, 1)
+        self.assertEqual(len(provider.search_calls), 2)
 
     def test_offline_error_does_not_remove_local_or_cached_state(self) -> None:
         entry_id = self._entry()
