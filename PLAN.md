@@ -19,7 +19,8 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 7 | Nginx streaming configuration | Done | Hardened template and conditional range/seek integration suite; 82 offline tests pass |
 | 8 | Native packaging and systemd deployment | Done | Wheel installer, hardened unit, account/state declarations, and deployment audits |
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
-| 10 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
+| 10 | Deployment feedback remediation | Pending | Matching, episode navigation, configurable media paths, and Make-based lifecycle pass |
+| 11 | End-to-end hardening and first release | Pending | Full acceptance suite passes; versioned release is documented |
 
 ## Decisions recorded
 
@@ -42,6 +43,16 @@ and one focused commit. Status values are **Pending**, **In progress**,
    replace a low-confidence title match. A per-title sidecar can pin a MAL ID.
 8. **No video hashing by default.** Normalized paths, sizes, and modification
    times make rescans cheap on Raspberry Pi storage.
+9. **One static player per title page.** A small, dependency-free JavaScript
+   controller changes the selected local MP4 in one player; Nginx remains the
+   only request-time server.
+10. **Deployment paths come from resolved configuration.** Native Nginx
+    generation must use the same `media_root` as the indexer instead of a
+    separately hardcoded value.
+11. **Build tooling uses the caller's interpreter.** Root-level Make targets
+    resolve the active Python interpreter and allow an explicit override; they
+    must not assume a virtual-environment name. The service executable remains
+    explicit and is validated for access by the system account.
 
 ## Step 0 — Architecture and project plan
 
@@ -433,7 +444,157 @@ byte ranges, state persistence across restart, `SIGHUP` rescanning, read-only
 media, healthy processes, and graceful Compose lifecycle. The actual
 multi-platform push remains a registry/Buildx operator acceptance step.
 
-## Step 10 — End-to-end hardening and first release
+## Step 10 — Deployment feedback remediation
+
+**Status: Pending**
+
+Address issues found on the first Raspberry Pi deployment. Implement the
+following substeps in order; keep the row above **Pending** until all four
+substeps and the upgrade exercise pass.
+
+| Substep | Change | Status | Acceptance evidence |
+|---:|---|---|---|
+| 10.1 | Metadata search resilience and diagnostics | Pending | Okinawa regression fixture matches MAL ID 55842; unmatched reasons are observable |
+| 10.2 | Single-player episode navigation | Pending | One player, selector, and previous/next controls work with and without JavaScript |
+| 10.3 | Config-driven native Nginx media root | Pending | `/mnt/media` is rendered from resolved config and passes Nginx/range tests |
+| 10.4 | Root Make install and update workflow | Pending | Clean install and in-place update run from repository root with caller-selected Python |
+
+### 10.1 — Metadata search resilience and diagnostics
+
+- Reproduce the reported folder name
+  `Okinawa de Suki ni Natta Ko ga Hougen Sugite Tsurasugi` with captured,
+  offline Jikan search responses. Verify whether the failure is an empty search,
+  a score below the confidence threshold, or an ambiguity-margin rejection.
+- Add bounded search fallbacks for long/near-canonical titles. Candidate
+  approaches include retrying normalized word prefixes and ranking the union of
+  results. Do not globally lower the confidence threshold in a way that creates
+  silent false matches.
+- Score canonical, English, Japanese, and synonym aliases consistently. Add
+  regression coverage for the one-character suffix difference between
+  `Tsurasugi` and MAL's `Tsurasugiru`, expecting provider ID `55842`.
+- Record a concise match outcome for each title: matched ID and score, no search
+  results, below threshold, ambiguous candidates, provider failure, or pinned
+  sidecar. Surface it in scan logs/status without storing entire remote
+  responses or unsafe terminal text.
+- Document `.rpi-streamer.ini` `mal_id = 55842` as the immediate deterministic
+  override and ensure a new/changed sidecar invalidates a previous unmatched
+  decision on the next rescan.
+
+**Tests and acceptance**
+
+- Offline tests cover the reported title, exact aliases, close competing
+  candidates, empty results, fallback request limits, and provider failures.
+- A fixture initially unmatched becomes enriched after adding a `mal_id`
+  sidecar or after the improved search succeeds.
+- Ordinary tests remain network-free and Jikan throttling/retry bounds remain
+  intact.
+
+### 10.2 — Single-player episode navigation
+
+- Replace the repeated `<video>` elements with one player and one escaped data
+  model containing only locally available MP4 files.
+- Add a native `<select>` episode picker plus Previous and Next buttons. Update
+  the player source, heading, button disabled states, URL fragment, and document
+  state without reloading the page.
+- Keep controls keyboard accessible, give them explicit labels, announce the
+  selected episode, and preserve the browser's native video controls.
+- Ship a small dependency-free JavaScript asset with the generated static site;
+  use no CDN or inline remote code. On navigation, pause the old source, change
+  it, call `load()`, and do not autoplay.
+- Provide a useful no-JavaScript fallback: the first local episode remains
+  playable and links for the remaining episodes remain available. Keep provider
+  episode metadata separate from local playability.
+- Apply responsive styling so the player and controls remain usable on phones
+  and televisions.
+
+**Tests and acceptance**
+
+- Generated HTML contains exactly one `<video>` for zero, one, and many-file
+  fixtures as applicable, and all filenames/URLs remain escaped.
+- DOM-level or browser tests verify selector and previous/next behavior,
+  first/last disabled states, fragment deep-linking, and filenames with Unicode
+  or punctuation.
+- Existing HTTP range/seek behavior continues to return `206`, and a manual
+  browser check confirms switching episodes does not download every MP4.
+
+### 10.3 — Config-driven native Nginx media root
+
+- Remove `/mnt/anime` substitution from the native installer. Render the Nginx
+  alias from the same fully resolved `media_root` used by the Python service.
+- Add a non-mutating deployment/render command or helper that reads normal
+  CLI/environment/INI precedence, validates the absolute path, escapes it for
+  Nginx safely, preserves the required trailing slash, and writes a candidate
+  configuration atomically.
+- Make install/update run `nginx -t` against the candidate before replacing the
+  active site. Preserve the last working Nginx configuration on validation or
+  reload failure.
+- Decide and document how environment-only `media_root` overrides are persisted
+  for systemd and Nginx; reject a transient mismatch rather than letting the
+  scanner and server use different roots.
+- Update examples and permission checks from a hardcoded `/mnt/anime` to the
+  configured value, including the reported `/mnt/media` deployment.
+
+**Tests and acceptance**
+
+- Paths containing spaces and Nginx-significant characters are either rendered
+  safely or rejected with an actionable error.
+- Installer tests prove that changing `media_root` from `/mnt/anime` to
+  `/mnt/media` updates Nginx without touching the media collection.
+- Nginx syntax, traversal protection, MP4-only access, and byte-range tests pass
+  for the configured root.
+
+### 10.4 — Root Make install and update workflow
+
+- Add a small root `Makefile` with discoverable `help`, `build`, `check`,
+  `install`, `update`, `validate`, `restart`, and `uninstall` targets. All
+  relative paths must be rooted at the repository, so commands work from the
+  documented repository root and consistently use `deployment/dist/` (or one
+  other single documented artifact directory).
+- Resolve `PYTHON` from the caller's active environment, defaulting to the
+  current `python3`, and allow `make ... PYTHON=/absolute/path/to/python`.
+  Never assume `$HOME/.venvs/py-rpistreamer`, `.venv`, or another environment
+  name; do not activate environments inside Make.
+- Separate unprivileged wheel creation/package installation from privileged
+  system-file installation so `sudo` does not silently replace the selected
+  interpreter. Pass the resolved console-script path explicitly into the
+  systemd unit rendering.
+- Support a venv, an explicitly selected system interpreter where its packaging
+  policy permits installation, and an already installed console script. Detect
+  PEP 668/read-only environments and fail with remediation instead of using
+  `--break-system-packages`.
+- Before changing the host, preflight the executable, configuration, service
+  account access, Nginx availability, and media path. In particular, detect a
+  selected executable below a home directory that conflicts with
+  `ProtectHome=true`; require an explicit safe location or documented hardening
+  override rather than installing a service that cannot start.
+- Make `install` idempotent and preserve existing INI/state. Make `update`
+  create a state/config backup, install the new wheel and deployment assets,
+  validate configuration and Nginx, then restart. On failure, restore the
+  previous deployment assets and leave clear rollback instructions for any
+  forward-only database migration.
+- Keep destructive uninstall/state removal separate and explicit. The default
+  uninstall must retain `/etc/rpi-streamer`, `/var/lib/rpi-streamer`, and media.
+
+**Tests and acceptance**
+
+- Shell/Make tests cover invocation from the repository root, paths with spaces,
+  `PYTHON` overrides, active-venv resolution, preserved config, repeated
+  install, update, failed preflight, and failed Nginx validation.
+- A clean Raspberry Pi OS install needs only the documented OS prerequisites,
+  `make install` variables, config review, and service start.
+- An existing Step 8 installation upgrades through `make update`; its SQLite
+  catalogue, generated site, configured `/mnt/media` root, and service
+  enablement survive.
+- README commands are copied into an automated smoke test so documented paths
+  cannot drift again.
+
+**Documentation/commit:** document the matching override and diagnostics,
+episode controls, resolved media path, Make variables, clean install, update,
+rollback, and legacy-upgrade workflow. Mark Step 10 and all substeps Done only
+after the deployed Raspberry Pi acceptance check; commit as
+`fix: address initial deployment feedback`.
+
+## Step 11 — End-to-end hardening and first release
 
 **Status: Pending**
 
@@ -463,7 +624,7 @@ Close cross-component gaps and prepare a maintainable first release.
   Pi and one amd64 Linux host.
 
 **Documentation/commit:** update all docs to describe shipped behavior, mark
-Step 10 Done, create a changelog entry, and commit as
+Step 11 Done, create a changelog entry, and commit as
 `chore: prepare initial release`.
 
 ## Cross-cutting quality rules
