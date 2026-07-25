@@ -21,8 +21,8 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 9 | Container images and Compose deployment | Done | Two non-root images, hardened Compose stack, health probes, and live fixture pass |
 | 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
 | 11 | End-to-end hardening and first release | In progress | Release-candidate automation/docs complete; Raspberry Pi and amd64 host acceptance pending |
-| 12 | Optional GPT-5.6 Luna inference fallback | In progress | Pinned/cached episode inference, schema v4 cache, and 108 tests pass; operator cache controls and Pi acceptance remain |
-| 13 | Tenrai metadata transport migration | Pending | Tenrai v1 contract, cache continuity, rollback, and live Raspberry Pi acceptance are planned |
+| 12 | Optional GPT-5.6 Luna inference fallback | In progress | Pinned/cached episode inference, schema v4 cache, and 113 tests pass; operator cache controls and Pi acceptance remain |
+| 13 | Tenrai metadata transport migration | In progress | Tenrai default, schema-v5 validator provenance, live ID 55842 probe, and 113 tests pass; Pi acceptance remains |
 
 ## Decisions recorded
 
@@ -844,7 +844,7 @@ opt-in live OpenAI smoke test, and Raspberry Pi cost/RSS/timing acceptance.
 
 ## Step 13 — Tenrai metadata transport migration
 
-**Status: Pending**
+**Status: In progress**
 
 Replace the unreliable public Jikan endpoint with Tenrai v1 while preserving
 the catalogue's existing MyAnimeList identity and offline behavior. Tenrai
@@ -953,6 +953,30 @@ table after each implemented substep. Commit the migration as
 `feat: switch metadata transport to Tenrai` and mark Step 13 Done only after
 offline compatibility, cache-continuity, rollback, and Raspberry Pi acceptance
 all pass.
+
+**Implemented in this increment:** a shared, dependency-free
+Jikan-compatible MAL client with trusted Tenrai v1 and legacy Jikan v4 endpoint
+profiles; Tenrai defaults for Python, native examples, and Compose; explicit
+`tenrai`, `jikan`, and `none` configuration; transport-labelled diagnostics;
+schema version 5 validator provenance; reuse of existing logical `jikan`
+records, MAL pins, relations, episodes, artwork paths, and inference cache;
+fresh-cache reuse across a transport switch; suppression of cross-host
+conditional validators on the first stale refresh; independent opt-in live
+smoke tests; and updated deployment/rollback documentation. Ruff, strict mypy,
+and 113 offline tests pass (five environment-dependent checks skip).
+
+A low-volume development-host probe on 2026-07-25 verified Tenrai search,
+`/anime/55842/full`, and `/anime/55842/episodes?page=1`: each returned the
+expected MAL identity and the episode endpoint returned 12 rows without
+pagination. The opt-in live smoke test also passed through the implemented
+Python client. No live response body was committed.
+
+**Still pending before Step 13 is Done:** install the increment on the
+Raspberry Pi, select `metadata_provider = tenrai` in the preserved production
+INI, record one cold stale refresh and one cached `SIGHUP` rescan for MAL ID
+`55842`, confirm the generated metadata and episode list, and temporarily test
+the documented `jikan` rollback before restoring Tenrai. Record scan duration,
+request failures, and peak RSS if available.
 
 ## Cross-cutting quality rules
 

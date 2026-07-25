@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 4
+LATEST_SCHEMA_VERSION: Final = 5
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -66,6 +66,7 @@ class ProviderRecord:
     raw_json: str
     etag: str | None
     last_modified: str | None
+    validator_source: str
     fetched_at: datetime
 
 
@@ -303,6 +304,12 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
             result_json TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
+        """,
+    ),
+    5: (
+        """
+        ALTER TABLE provider_records
+        ADD COLUMN validator_source TEXT NOT NULL DEFAULT 'jikan'
         """,
     ),
 }
@@ -727,6 +734,7 @@ class CatalogueRepository:
         episode_count: int | None = None,
         etag: str | None = None,
         last_modified: str | None = None,
+        validator_source: str = "jikan",
     ) -> ProviderRecord:
         if episode_count is not None and episode_count < 0:
             raise ValueError("episode_count must be non-negative")
@@ -746,6 +754,7 @@ class CatalogueRepository:
             raw_json,
             etag,
             last_modified,
+            _required_text(validator_source, "validator_source"),
             _utc_text(fetched_at),
         )
         with self.transaction():
@@ -754,9 +763,9 @@ class CatalogueRepository:
                 INSERT INTO provider_records(
                     library_entry_id, provider, provider_id, canonical_title,
                     synopsis, episode_count, raw_json, etag, last_modified,
-                    fetched_at
+                    validator_source, fetched_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(library_entry_id, provider) DO UPDATE SET
                     provider_id = excluded.provider_id,
                     canonical_title = excluded.canonical_title,
@@ -765,6 +774,7 @@ class CatalogueRepository:
                     raw_json = excluded.raw_json,
                     etag = excluded.etag,
                     last_modified = excluded.last_modified,
+                    validator_source = excluded.validator_source,
                     fetched_at = excluded.fetched_at
                 """,
                 values,
@@ -1238,6 +1248,7 @@ def _provider_record(row: sqlite3.Row) -> ProviderRecord:
         last_modified=(
             None if row["last_modified"] is None else str(row["last_modified"])
         ),
+        validator_source=str(row["validator_source"]),
         fetched_at=fetched_at,
     )
 

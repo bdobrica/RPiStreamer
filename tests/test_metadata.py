@@ -24,6 +24,7 @@ from rpi_streamer.metadata import (
     HttpResponse,
     JikanProvider,
     ProviderError,
+    TenraiProvider,
     enrich_catalogue,
     match_candidate,
     normalize_title,
@@ -88,6 +89,25 @@ class QueueTransport:
 
 
 class JikanProviderTests(unittest.TestCase):
+    def test_profiles_share_schema_identity_but_use_distinct_hosts(self) -> None:
+        tenrai_transport = QueueTransport([json_response({"data": []})])
+        jikan_transport = QueueTransport([json_response({"data": []})])
+        tenrai = TenraiProvider(transport=tenrai_transport, min_request_interval=0)
+        jikan = JikanProvider(transport=jikan_transport, min_request_interval=0)
+
+        tenrai.search("test")
+        jikan.search("test")
+
+        self.assertEqual((tenrai.name, jikan.name), ("jikan", "jikan"))
+        self.assertEqual(tenrai.transport_name, "tenrai")
+        self.assertEqual(jikan.transport_name, "jikan")
+        self.assertTrue(
+            tenrai_transport.requests[0].url.startswith("https://api.tenrai.org/v1/")
+        )
+        self.assertTrue(
+            jikan_transport.requests[0].url.startswith("https://api.jikan.moe/v4/")
+        )
+
     def test_search_and_full_details_are_normalized(self) -> None:
         transport = QueueTransport(
             [
@@ -288,6 +308,7 @@ class MatchingTests(unittest.TestCase):
 
 class FakeProvider:
     name = "jikan"
+    transport_name = "jikan"
 
     def __init__(self) -> None:
         self.search_calls: list[str] = []
@@ -424,6 +445,46 @@ class EnrichmentTests(unittest.TestCase):
         record = self.repository.get_provider_record(entry_id, "jikan")
         assert record is not None
         self.assertEqual(record.fetched_at, NOW + timedelta(hours=2))
+
+    def test_transport_switch_reuses_record_without_cross_host_validators(
+        self,
+    ) -> None:
+        entry_id = self._entry()
+        jikan = FakeProvider()
+        enrich_catalogue(
+            self.repository,
+            jikan,
+            refresh_interval=86400,
+            state_dir=self.root,
+            download_artwork=False,
+            now=NOW,
+        )
+        tenrai = FakeProvider()
+        tenrai.transport_name = "tenrai"
+
+        fresh = enrich_catalogue(
+            self.repository,
+            tenrai,
+            refresh_interval=86400,
+            state_dir=self.root,
+            download_artwork=False,
+            now=NOW + timedelta(hours=1),
+        )
+        stale = enrich_catalogue(
+            self.repository,
+            tenrai,
+            refresh_interval=1,
+            state_dir=self.root,
+            download_artwork=False,
+            now=NOW + timedelta(hours=2),
+        )
+
+        self.assertEqual((fresh.cached, stale.enriched), (1, 1))
+        self.assertEqual(tenrai.search_calls, [])
+        self.assertEqual(tenrai.detail_calls, [("1", None)])
+        record = self.repository.get_provider_record(entry_id, "jikan")
+        assert record is not None
+        self.assertEqual(record.validator_source, "tenrai")
 
     def test_pin_bypasses_search_disabled_bypasses_all_network(self) -> None:
         self._entry("Pinned", pinned="99")
@@ -664,3 +725,15 @@ class LiveJikanSmokeTest(unittest.TestCase):
     def test_searches_one_known_title(self) -> None:
         provider = JikanProvider()
         self.assertTrue(provider.search("Cowboy Bebop"))
+
+
+@unittest.skipUnless(
+    os.environ.get("RPI_STREAMER_LIVE_TENRAI") == "1",
+    "set RPI_STREAMER_LIVE_TENRAI=1 for the opt-in live smoke test",
+)
+class LiveTenraiSmokeTest(unittest.TestCase):
+    def test_fetches_reported_title_and_episodes(self) -> None:
+        provider = TenraiProvider()
+        details = provider.details("55842").details
+        self.assertIsNotNone(details)
+        self.assertTrue(provider.episodes("55842"))

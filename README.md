@@ -14,7 +14,7 @@ transcode video, manage users, or expose a public internet service.
 > complete and Step 11's repository work is complete; Raspberry Pi and amd64
 > host acceptance remains before the first release tag. The installable CLI,
 > configuration layer, versioned SQLite repository, and read-only filesystem
-> scanner with cached Jikan enrichment and atomic static catalogue generation
+> scanner with cached Tenrai enrichment and atomic static catalogue generation
 > are available with periodic and signal-triggered service operation and an
 > Nginx configuration for static catalogue and MP4 range serving, and a
 > hardened native systemd deployment and a rootless-process Compose deployment.
@@ -52,7 +52,7 @@ and AAC audio provide the broadest playback support.
 ```mermaid
 flowchart LR
     browser[Web browser]
-    jikan[Jikan REST API v4]
+    tenrai[Tenrai API v1]
 
     subgraph host[RPi Streamer host]
         media[(Media mount<br/>/mnt/anime)]
@@ -68,7 +68,7 @@ flowchart LR
         site -->|Static catalogue| nginx
     end
 
-    indexer <-->|Cached, rate-limited metadata| jikan
+    indexer <-->|Cached, rate-limited metadata| tenrai
     nginx -->|HTML, images, and MP4 byte ranges| browser
 ```
 
@@ -80,14 +80,14 @@ no authentication or per-user state. A dynamic API can be added later without
 changing media URLs.
 
 The implementation uses the public, read-only
-[Jikan REST API v4](https://docs.api.jikan.moe/) as the default metadata
-provider. Jikan is an unofficial MyAnimeList API, supports conditional
-requests, and currently documents limits of 3 requests/second and 60
-requests/minute. RPi Streamer sends at most one request per second per process,
-uses a descriptive user agent and 10-second timeout, persists fetched
-responses, honors `ETag`/`Last-Modified`, and makes at most three attempts with
-bounded backoff for `429` and transient `5xx` responses. Metadata availability
-is never required for local playback.
+[Tenrai API v1](https://tenrai.org/) as the default metadata transport. Tenrai
+is an authless unofficial MyAnimeList API whose v1 contract is compatible with
+Jikan v4. The legacy Jikan endpoint remains an explicit rollback option.
+RPi Streamer sends at most one request per second per process, uses a
+descriptive user agent and 10-second timeout, persists fetched responses,
+honors transport-specific `ETag`/`Last-Modified` validators, and makes at most
+three attempts with bounded backoff for `429` and transient `5xx` responses.
+Metadata availability is never required for local playback.
 
 ### Metadata matching and caching
 
@@ -105,12 +105,14 @@ The selected anime's title, synopsis, episode count and episode rows, aliases,
 genres, anime relations, raw diagnostic response, validators, and cover
 reference are stored in SQLite. Fresh records make no network request. Records
 older than `metadata_refresh_interval` are refreshed conditionally; a `304`
-advances the cache timestamp without replacing normalized data. Set
-`metadata_provider = none` for entirely offline scans.
+advances the cache timestamp without replacing normalized data. Switching
+between Tenrai and Jikan reuses normalized records and MAL IDs but does not
+send validators obtained from one host to the other. Set
+`metadata_provider = jikan` for rollback or `none` for entirely offline scans.
 
-`metadata_language` selects the cached canonical title when Jikan provides a
+`metadata_language` selects the cached canonical title when the provider supplies a
 matching English (`en`/`eng`) or Japanese (`ja`/`jp`/`jpn`) alias, falling back
-to Jikan's default title. A sidecar `mal_id` bypasses search and confidence
+to the provider's default title. A sidecar `mal_id` bypasses search and confidence
 matching. `metadata_enabled = false` prevents all metadata requests for that
 folder.
 
@@ -161,11 +163,11 @@ number from an arbitrary number embedded in a title.
 
 Set `openai_fallback_enabled = true` to use `gpt-5.6-luna` for two bounded
 jobs. Title normalization runs only after a new title fails the pinned,
-cached, and deterministic Jikan matching paths. Episode inference runs
+cached, and deterministic provider matching paths. Episode inference runs
 independently whenever filenames have no deterministic episode hint, including
 for pinned and already cached titles. The model returns one strict, versioned
 JSON object containing a normalized search title and conservative episode
-hints. A normalized title is only a new Jikan search query: its candidate must
+hints. A normalized title is only a new metadata search query: its candidate must
 still pass the existing score and ambiguity checks, and a model-produced MAL
 ID is never accepted. A manual `mal_id` remains authoritative.
 
@@ -302,7 +304,7 @@ state_dir = /var/lib/rpi-streamer
 site_dir = /var/lib/rpi-streamer/site
 database_path = /var/lib/rpi-streamer/catalogue.db
 scan_interval = 1h
-metadata_provider = jikan
+metadata_provider = tenrai
 metadata_refresh_interval = 30d
 metadata_language = en
 download_artwork = true
@@ -322,7 +324,7 @@ log_level = INFO
 | `site_dir` | `RPI_STREAMER_SITE_DIR` | Atomically published static catalogue |
 | `database_path` | `RPI_STREAMER_DATABASE_PATH` | SQLite database file |
 | `scan_interval` | `RPI_STREAMER_SCAN_INTERVAL` | Delay between automatic scans; `0` disables them |
-| `metadata_provider` | `RPI_STREAMER_METADATA_PROVIDER` | `jikan` or `none` initially |
+| `metadata_provider` | `RPI_STREAMER_METADATA_PROVIDER` | `tenrai` (default), `jikan` rollback, or `none` |
 | `metadata_refresh_interval` | `RPI_STREAMER_METADATA_REFRESH_INTERVAL` | Maximum metadata cache age |
 | `metadata_language` | `RPI_STREAMER_METADATA_LANGUAGE` | Preferred display-title language |
 | `download_artwork` | `RPI_STREAMER_DOWNLOAD_ARTWORK` | Cache covers locally |
@@ -344,7 +346,7 @@ Configuration validation currently enforces:
 - absolute, distinct state/site/database paths with writable existing
   ancestors;
 - state, site, and database paths outside the media root;
-- `jikan` or `none` as the metadata provider;
+- `tenrai`, `jikan`, or `none` as the metadata provider;
 - a positive metadata refresh interval and a non-negative scan interval;
 - a key, positive timeout/call budget, valid model name, and positive cache
   lifetime when the OpenAI fallback is enabled;
@@ -360,6 +362,20 @@ configuration error:
 rpi-streamer --config ./config/rpi-streamer.ini.example validate-config
 RPI_STREAMER_CONFIG=/path/to/rpi-streamer.ini rpi-streamer validate-config
 ```
+
+Tenrai is used by default for new configuration files. Existing native INI
+files are intentionally preserved by `make update`, so set the provider
+explicitly when upgrading:
+
+```ini
+[rpi-streamer]
+metadata_provider = tenrai
+```
+
+Then run `sudo systemctl reload rpi-streamer`. To roll back without changing
+the database, set `metadata_provider = jikan`; to suppress remote metadata
+requests entirely, set it to `none`. All three modes retain local playback and
+the last cached metadata.
 
 `validate-config` never prints the API key; it emits `[configured]` instead.
 Keeping the key in `/etc/rpi-streamer/rpi-streamer.ini` is supported. Native
@@ -686,7 +702,7 @@ LAN binding, and application settings in the shell or a project `.env` file:
 | `RPI_STREAMER_PORT` | `8080` | Published host port |
 | `RPI_STREAMER_VERSION` | `local` | Local image tag and version label |
 | `RPI_STREAMER_SCAN_INTERVAL` | `1h` | Periodic rescan interval |
-| `RPI_STREAMER_METADATA_PROVIDER` | `jikan` | `jikan` or offline `none` |
+| `RPI_STREAMER_METADATA_PROVIDER` | `tenrai` | Tenrai, Jikan rollback, or offline `none` |
 | `RPI_STREAMER_METADATA_REFRESH_INTERVAL` | `30d` | Metadata cache lifetime |
 | `RPI_STREAMER_METADATA_LANGUAGE` | `en` | Preferred provider language |
 | `RPI_STREAMER_DOWNLOAD_ARTWORK` | `true` | Cache cover artwork |
@@ -764,7 +780,7 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 4 contains:
+Schema version 5 contains:
 
 | Table | Stored data |
 |---|---|
@@ -772,7 +788,7 @@ Schema version 4 contains:
 | `library_entries` | Title folders, display/sort titles, availability, and metadata overrides |
 | `media_files` | Relative MP4 paths, filesystem identity, size/mtime, deterministic and inferred episode hints, and availability |
 | `inference_cache` | Digest-keyed structured model results, model/schema version, and timestamp |
-| `provider_records` | Normalized title details, provider IDs, cache validators, refresh time, and compact raw detail JSON |
+| `provider_records` | Normalized title details, MAL IDs, cache validators and their transport provenance, refresh time, and compact raw detail JSON |
 | `provider_episodes` | Provider episode number, title, air date, filler, and recap flags |
 | `aliases` | Provider title aliases by type |
 | `genres` / `provider_record_genres` | Case-insensitive normalized genres and title membership |
@@ -835,10 +851,11 @@ mypy
 pytest
 ```
 
-The normal test suite never contacts Jikan. An explicit, low-volume live smoke
-test is available when troubleshooting provider connectivity:
+The normal test suite never contacts Tenrai or Jikan. Explicit, low-volume live
+smoke tests are available when troubleshooting provider connectivity:
 
 ```bash
+RPI_STREAMER_LIVE_TENRAI=1 pytest tests/test_metadata.py::LiveTenraiSmokeTest
 RPI_STREAMER_LIVE_JIKAN=1 pytest tests/test_metadata.py::LiveJikanSmokeTest
 ```
 
@@ -889,9 +906,10 @@ Known limitations and deferred work:
 - trusted-local-network operation only; no authentication or TLS;
 - MP4 only, with no transcoding, remuxing, or HLS;
 - static pages with no dynamic API or full-text search index;
-- Jikan as the only metadata provider;
-- model-assisted title normalization is not implemented and, if added, must be
-  optional, credential-protected, bounded, structured, and cached;
+- Tenrai and Jikan share one Jikan-compatible MAL metadata schema; providers
+  with a different schema are not implemented;
+- model-assisted inference still depends on provider search/details for
+  verified metadata;
 - browser playback remains dependent on codecs in the source MP4;
 - metadata relationships link locally only when the related provider title is
   already matched in the collection.

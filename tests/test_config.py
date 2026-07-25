@@ -41,7 +41,7 @@ class SettingsTestCase(unittest.TestCase):
             "site_dir": str(self.site_dir),
             "database_path": str(self.database_path),
             "scan_interval": "1h",
-            "metadata_provider": "jikan",
+            "metadata_provider": "tenrai",
             "metadata_refresh_interval": "30d",
             "metadata_language": "en",
             "download_artwork": "true",
@@ -65,7 +65,7 @@ class SettingsTestCase(unittest.TestCase):
 
         self.assertEqual(settings.scan_interval, 3600)
         self.assertEqual(settings.metadata_refresh_interval, 30 * 86400)
-        self.assertEqual(settings.metadata_provider, "jikan")
+        self.assertEqual(settings.metadata_provider, "tenrai")
         self.assertTrue(settings.download_artwork)
         self.assertEqual(settings.log_level, "INFO")
 
@@ -87,6 +87,13 @@ class SettingsTestCase(unittest.TestCase):
         self.assertEqual(settings.metadata_language, "ro")
         self.assertFalse(settings.download_artwork)
         self.assertEqual(settings.log_level, "DEBUG")
+
+    def test_jikan_remains_an_explicit_rollback_provider(self) -> None:
+        path = self._write_config(metadata_provider="jikan")
+
+        settings = load_settings(config_path=path, environ={})
+
+        self.assertEqual(settings.metadata_provider, "jikan")
 
     def test_environment_overrides_ini(self) -> None:
         path = self._write_config(scan_interval="5m", log_level="WARNING")

@@ -23,7 +23,7 @@ from rpi_streamer.config import Settings
 from rpi_streamer.database import CatalogueRepository, ScanRun
 from rpi_streamer.generator import GeneratedSite, generate_site
 from rpi_streamer.inference import OpenAIInferenceClient
-from rpi_streamer.metadata import JikanProvider, enrich_catalogue
+from rpi_streamer.metadata import JikanProvider, TenraiProvider, enrich_catalogue
 from rpi_streamer.scanner import scan_library
 
 LOGGER = logging.getLogger(__name__)
@@ -55,8 +55,12 @@ def run_once(settings: Settings) -> RunSummary:
 
     with CatalogueRepository(settings.database_path) as repository:
         enrich = None
-        if settings.metadata_provider == "jikan":
-            provider = JikanProvider()
+        if settings.metadata_provider in {"jikan", "tenrai"}:
+            provider = (
+                TenraiProvider()
+                if settings.metadata_provider == "tenrai"
+                else JikanProvider()
+            )
             inference = (
                 OpenAIInferenceClient(
                     settings.openai_api_key or "",

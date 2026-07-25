@@ -20,6 +20,7 @@ class FixtureProvider:
     """Deterministic metadata boundary for the full offline pipeline."""
 
     name = "jikan"
+    transport_name = "tenrai"
 
     def search(self, title: str) -> list[AnimeCandidate]:
         return [AnimeCandidate("1", title, ("Fixture Anime",))]
@@ -74,11 +75,11 @@ class EndToEndFixtureTests(unittest.TestCase):
             state_dir=self.state,
             site_dir=self.site,
             database_path=self.database,
-            metadata_provider="jikan",
+            metadata_provider="tenrai",
             download_artwork=False,
         )
 
-    @patch("rpi_streamer.service.JikanProvider", FixtureProvider)
+    @patch("rpi_streamer.service.TenraiProvider", FixtureProvider)
     def test_scan_metadata_database_generation_rescan_and_removal(self) -> None:
         first = run_once(self.settings)
 

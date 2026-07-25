@@ -51,6 +51,15 @@ class DatabaseTestCase(unittest.TestCase):
             fetched_at=NOW,
         ).id
 
+    def test_provider_validator_source_defaults_to_legacy_jikan(self) -> None:
+        entry_id = self._entry()
+        self._provider_record(entry_id)
+
+        record = self.repository.get_provider_record(entry_id, "jikan")
+
+        assert record is not None
+        self.assertEqual(record.validator_source, "jikan")
+
     def test_fresh_database_is_migrated_and_configured(self) -> None:
         self.assertEqual(self.repository.schema_version, LATEST_SCHEMA_VERSION)
         self.assertTrue(self.repository.foreign_keys_enabled)
@@ -82,6 +91,54 @@ class DatabaseTestCase(unittest.TestCase):
 
         with self.assertRaisesRegex(UnsupportedSchemaError, "newer"):
             CatalogueRepository(path)
+
+    def test_schema_four_records_gain_jikan_validator_provenance(self) -> None:
+        path = Path(self.temporary_directory.name) / "schema-four.db"
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_migrations VALUES
+                (1, '2026-01-01T00:00:00Z'),
+                (2, '2026-01-01T00:00:00Z'),
+                (3, '2026-01-01T00:00:00Z'),
+                (4, '2026-01-01T00:00:00Z');
+            CREATE TABLE provider_records (
+                id INTEGER PRIMARY KEY,
+                library_entry_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                canonical_title TEXT NOT NULL,
+                synopsis TEXT,
+                episode_count INTEGER,
+                raw_json TEXT NOT NULL,
+                etag TEXT,
+                last_modified TEXT,
+                fetched_at TEXT NOT NULL
+            );
+            INSERT INTO provider_records VALUES (
+                1, 7, 'jikan', '55842', 'Okinawa', NULL, 12, '{}',
+                '"legacy"', NULL, '2026-07-25T00:00:00+00:00'
+            );
+            """
+        )
+        connection.close()
+
+        migrated = CatalogueRepository(path)
+        self.assertEqual(migrated.schema_version, 5)
+        migrated.close()
+        verification = sqlite3.connect(path)
+        verification.row_factory = sqlite3.Row
+        row = verification.execute(
+            "SELECT validator_source FROM provider_records WHERE id = 1"
+        ).fetchone()
+        verification.close()
+
+        assert row is not None
+        self.assertEqual(row["validator_source"], "jikan")
 
     def test_library_and_media_crud_and_reconciliation(self) -> None:
         entry = self.repository.upsert_library_entry(

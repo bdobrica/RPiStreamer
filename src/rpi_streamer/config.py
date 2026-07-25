@@ -20,7 +20,7 @@ _DURATION_RE: Final = re.compile(r"^(0|[1-9][0-9]*)([smhd]?)$", re.ASCII)
 _LANGUAGE_RE: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,15}$", re.ASCII)
 _TRUE_VALUES: Final = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES: Final = frozenset({"0", "false", "no", "off"})
-_PROVIDERS: Final = frozenset({"jikan", "none"})
+_PROVIDERS: Final = frozenset({"jikan", "none", "tenrai"})
 _LOG_LEVELS: Final = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 _MODEL_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", re.ASCII)
 
@@ -38,7 +38,7 @@ class Settings:
     site_dir: Path = Path("/var/lib/rpi-streamer/site")
     database_path: Path = Path("/var/lib/rpi-streamer/catalogue.db")
     scan_interval: int = 3600
-    metadata_provider: str = "jikan"
+    metadata_provider: str = "tenrai"
     metadata_refresh_interval: int = 30 * 86400
     metadata_language: str = "en"
     download_artwork: bool = True
@@ -85,7 +85,7 @@ _DEFAULT_TEXT: Final[dict[str, str]] = {
     "site_dir": "/var/lib/rpi-streamer/site",
     "database_path": "/var/lib/rpi-streamer/catalogue.db",
     "scan_interval": "1h",
-    "metadata_provider": "jikan",
+    "metadata_provider": "tenrai",
     "metadata_refresh_interval": "30d",
     "metadata_language": "en",
     "download_artwork": "true",

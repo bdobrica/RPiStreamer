@@ -42,9 +42,7 @@ def result(
         "title_hint": title,
         "confidence": 0.97,
         "reason": "Normalized a truncated romanized title.",
-        "episodes": [
-            {"filename": filename, "hint": hint, "confidence": 0.95}
-        ],
+        "episodes": [{"filename": filename, "hint": hint, "confidence": 0.95}],
     }
 
 
@@ -58,9 +56,7 @@ class OpenAIInferenceTests(unittest.TestCase):
             captured.append(request)
             return response_payload(result())
 
-        client = OpenAIInferenceClient(
-            "secret-key", max_calls=1, transport=transport
-        )
+        client = OpenAIInferenceClient("secret-key", max_calls=1, transport=transport)
         inferred = client.infer("Okinawa title", ["release_show_01.mp4"])
 
         self.assertEqual(inferred.episodes[0].hint, "E1")
@@ -80,6 +76,7 @@ class OpenAIInferenceTests(unittest.TestCase):
         ]
         for payload in payloads:
             with self.subTest(payload=payload):
+
                 def transport(
                     _request: urllib.request.Request,
                     _timeout: float,

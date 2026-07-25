@@ -38,6 +38,7 @@ from rpi_streamer.inference import (
 )
 
 JIKAN_BASE_URL: Final = "https://api.jikan.moe/v4"
+TENRAI_BASE_URL: Final = "https://api.tenrai.org/v1"
 USER_AGENT: Final = "RPi-Streamer/0.1 (+https://github.com/bdobrica/RPiStreamer)"
 MIN_REQUEST_INTERVAL: Final = 1.05
 DEFAULT_TIMEOUT: Final = 10.0
@@ -109,6 +110,7 @@ class AnimeProvider(Protocol):
     """Provider boundary used by catalogue enrichment."""
 
     name: str
+    transport_name: str
 
     def search(self, title: str) -> Sequence[AnimeCandidate]: ...
 
@@ -128,27 +130,52 @@ Sleep = Callable[[float], None]
 Clock = Callable[[], float]
 
 
-class JikanProvider:
-    """Small synchronous Jikan v4 client with global per-instance throttling."""
+@dataclass(frozen=True, slots=True)
+class EndpointProfile:
+    """Trusted endpoint and diagnostic identity for a MAL metadata transport."""
+
+    name: str
+    label: str
+    base_url: str
+    min_request_interval: float = MIN_REQUEST_INTERVAL
+
+
+TENRAI_PROFILE: Final = EndpointProfile(
+    "tenrai", "Tenrai", TENRAI_BASE_URL, MIN_REQUEST_INTERVAL
+)
+JIKAN_PROFILE: Final = EndpointProfile(
+    "jikan", "Jikan", JIKAN_BASE_URL, MIN_REQUEST_INTERVAL
+)
+
+
+class MalMetadataProvider:
+    """Synchronous, bounded client for the Jikan-compatible MAL schema."""
 
     name = "jikan"
 
     def __init__(
         self,
         *,
-        base_url: str = JIKAN_BASE_URL,
+        profile: EndpointProfile,
         timeout: float = DEFAULT_TIMEOUT,
-        min_request_interval: float = MIN_REQUEST_INTERVAL,
+        min_request_interval: float | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         transport: Transport | None = None,
         sleep: Sleep = time.sleep,
         clock: Clock = time.monotonic,
     ) -> None:
-        if timeout <= 0 or min_request_interval < 0 or max_attempts <= 0:
-            raise ValueError("invalid Jikan timeout, interval, or attempt count")
-        self.base_url = base_url.rstrip("/")
+        interval = (
+            profile.min_request_interval
+            if min_request_interval is None
+            else min_request_interval
+        )
+        if timeout <= 0 or interval < 0 or max_attempts <= 0:
+            raise ValueError("invalid metadata timeout, interval, or attempt count")
+        self.profile = profile
+        self.transport_name = profile.name
+        self.base_url = profile.base_url.rstrip("/")
         self.timeout = timeout
-        self.min_request_interval = min_request_interval
+        self.min_request_interval = interval
         self.max_attempts = max_attempts
         self._transport = transport or _urllib_transport
         self._sleep = sleep
@@ -267,11 +294,13 @@ class JikanProvider:
         if response.status == 304:
             return {}, response
         if response.status != 200:
-            raise ProviderError(f"Jikan returned HTTP {response.status}")
+            raise ProviderError(f"{self.profile.label} returned HTTP {response.status}")
         try:
             payload = json.loads(response.body.decode("utf-8"))
         except (UnicodeError, json.JSONDecodeError) as error:
-            raise ProviderError(f"Jikan returned malformed JSON: {error}") from error
+            raise ProviderError(
+                f"{self.profile.label} returned malformed JSON: {error}"
+            ) from error
         return _mapping(payload, "response"), response
 
     def _request(
@@ -295,7 +324,9 @@ class JikanProvider:
                 )
             except (OSError, TimeoutError) as error:
                 if attempt + 1 == self.max_attempts:
-                    raise ProviderError(f"Jikan request failed: {error}") from error
+                    raise ProviderError(
+                        f"{self.profile.label} request failed: {error}"
+                    ) from error
                 self._sleep(2**attempt)
                 continue
             content_length = _header(response.headers, "content-length")
@@ -313,7 +344,8 @@ class JikanProvider:
                 return response
             if attempt + 1 == self.max_attempts:
                 raise ProviderError(
-                    f"Jikan retry limit reached after HTTP {response.status}"
+                    f"{self.profile.label} retry limit reached after "
+                    f"HTTP {response.status}"
                 )
             retry_after = _retry_after(response.headers)
             self._sleep(max(float(2**attempt), retry_after))
@@ -327,6 +359,54 @@ class JikanProvider:
                 self._sleep(remaining)
                 now = self._clock()
         self._last_request_at = now
+
+
+class TenraiProvider(MalMetadataProvider):
+    """Tenrai v1 transport for the Jikan-compatible MAL schema."""
+
+    def __init__(
+        self,
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        min_request_interval: float | None = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        transport: Transport | None = None,
+        sleep: Sleep = time.sleep,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        super().__init__(
+            profile=TENRAI_PROFILE,
+            timeout=timeout,
+            min_request_interval=min_request_interval,
+            max_attempts=max_attempts,
+            transport=transport,
+            sleep=sleep,
+            clock=clock,
+        )
+
+
+class JikanProvider(MalMetadataProvider):
+    """Legacy Jikan v4 rollback transport."""
+
+    def __init__(
+        self,
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        min_request_interval: float | None = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        transport: Transport | None = None,
+        sleep: Sleep = time.sleep,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        super().__init__(
+            profile=JIKAN_PROFILE,
+            timeout=timeout,
+            min_request_interval=min_request_interval,
+            max_attempts=max_attempts,
+            transport=transport,
+            sleep=sleep,
+            clock=clock,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,14 +539,24 @@ def enrich_catalogue(
             )
             validators = (
                 None
-                if record is None or record.provider_id != provider_id
+                if (
+                    record is None
+                    or record.provider_id != provider_id
+                    or record.validator_source != provider.transport_name
+                )
                 else CacheValidators(record.etag, record.last_modified)
             )
             result = provider.details(provider_id, validators)
             if result.not_modified:
                 if record is None:
                     raise ProviderError("provider returned 304 without cached metadata")
-                _refresh_cached_record(repository, record, result.validators, timestamp)
+                _refresh_cached_record(
+                    repository,
+                    record,
+                    result.validators,
+                    provider.transport_name,
+                    timestamp,
+                )
                 cached += 1
                 continue
             details = result.details
@@ -475,7 +565,7 @@ def enrich_catalogue(
             episodes = provider.episodes(details.provider_id)
             _store_details(
                 repository,
-                provider.name,
+                provider,
                 entry,
                 details,
                 episodes,
@@ -509,8 +599,7 @@ def _infer_episodes_nonfatal(
     if inference is None:
         return
     if not any(
-        media.episode_hint is None
-        for media in repository.list_media_files(entry.id)
+        media.episode_hint is None for media in repository.list_media_files(entry.id)
     ):
         return
     try:
@@ -696,7 +785,7 @@ def _log_value(value: str) -> str:
 
 def _store_details(
     repository: CatalogueRepository,
-    provider_name: str,
+    provider: AnimeProvider,
     entry: LibraryEntry,
     details: AnimeDetails,
     episodes: Sequence[ProviderEpisode],
@@ -706,7 +795,7 @@ def _store_details(
     with repository.transaction():
         record = repository.upsert_provider_record(
             library_entry_id=entry.id,
-            provider=provider_name,
+            provider=provider.name,
             provider_id=details.provider_id,
             canonical_title=_preferred_title(details, metadata_language),
             synopsis=details.synopsis,
@@ -714,6 +803,7 @@ def _store_details(
             raw_data=details.raw_data,
             etag=details.validators.etag,
             last_modified=details.validators.last_modified,
+            validator_source=provider.transport_name,
             fetched_at=timestamp,
         )
         repository.replace_aliases(record.id, details.aliases)
@@ -741,6 +831,7 @@ def _refresh_cached_record(
     repository: CatalogueRepository,
     record: ProviderRecord,
     validators: CacheValidators,
+    validator_source: str,
     timestamp: datetime,
 ) -> None:
     repository.upsert_provider_record(
@@ -753,6 +844,7 @@ def _refresh_cached_record(
         raw_data=json.loads(record.raw_json),
         etag=validators.etag or record.etag,
         last_modified=validators.last_modified or record.last_modified,
+        validator_source=validator_source,
         fetched_at=timestamp,
     )
 
