@@ -22,6 +22,7 @@ and one focused commit. Status values are **Pending**, **In progress**,
 | 10 | Deployment feedback remediation | Done | Resilient matching, one-player navigation, config-rendered Nginx, and Make lifecycle; 98 tests pass |
 | 11 | End-to-end hardening and first release | In progress | Release-candidate automation/docs complete; Raspberry Pi and amd64 host acceptance pending |
 | 12 | Optional GPT-5.6 Luna inference fallback | In progress | Pinned/cached episode inference, schema v4 cache, and 108 tests pass; operator cache controls and Pi acceptance remain |
+| 13 | Tenrai metadata transport migration | Pending | Tenrai v1 contract, cache continuity, rollback, and live Raspberry Pi acceptance are planned |
 
 ## Decisions recorded
 
@@ -59,6 +60,12 @@ and one focused commit. Status values are **Pending**, **In progress**,
     fails, but must use structured output, bounded calls, cached results, and a
     protected environment/credential secret. It may not silently override a
     pinned MAL ID or treat an inferred ID as verified metadata.
+13. **Tenrai will replace Jikan's public transport, not the MAL identity
+    namespace.** Tenrai v1 describes itself as a Jikan v4-compatible API and
+    uses the same MAL IDs. Existing pins, provider records, relations, and
+    artwork therefore remain reusable. The migration must verify the subset of
+    the response contract used by RPi Streamer and retain a documented Jikan
+    rollback until Tenrai passes live acceptance.
 
 ## Step 0 — Architecture and project plan
 
@@ -834,6 +841,118 @@ retaining ordinary nested directories with the same name.
 invalidation, transient-failure cooldown/retry telemetry, a separately
 requested forced-inference refresh, broader episode taxonomy fixtures, an
 opt-in live OpenAI smoke test, and Raspberry Pi cost/RSS/timing acceptance.
+
+## Step 13 — Tenrai metadata transport migration
+
+**Status: Pending**
+
+Replace the unreliable public Jikan endpoint with Tenrai v1 while preserving
+the catalogue's existing MyAnimeList identity and offline behavior. Tenrai
+currently advertises v1 as an authless, 1:1 Jikan v4 mirror, so the first
+implementation should reuse the proven parser, matching, retry, cache, and
+artwork code rather than create an unrelated provider stack.
+
+### 13.1 — Freeze and verify the consumed API contract
+
+- Inventory only the endpoints and fields RPi Streamer consumes:
+  `GET /anime`, `GET /anime/{mal_id}/full`,
+  `GET /anime/{mal_id}/episodes`, pagination, artwork URLs, and conditional
+  response validators.
+- Capture small, sanitized Tenrai fixtures for search, full details, paginated
+  episodes, relations, aliases, genres, images, error responses, and missing or
+  nullable fields. Keep ordinary tests network-free.
+- Compare those fixtures with the existing Jikan fixtures. Record any
+  differences in status codes, pagination, validators, rate-limit headers,
+  field nullability, image hosts, maximum page size, or error bodies.
+- Confirm directly that the reported MAL ID `55842` works through search,
+  `/full`, and `/episodes`; use it as a regression fixture without copying
+  unnecessary upstream data into the repository.
+- Review Tenrai's published usage terms, rate-limit guidance, status page, and
+  versioning policy before selecting production throttle and retry defaults.
+  Do not infer Jikan's limits apply merely because the JSON schema is
+  compatible.
+
+### 13.2 — Extract a Jikan-compatible MAL transport
+
+- Rename/refactor `JikanProvider` into a neutral implementation such as
+  `MalMetadataProvider`, with an endpoint profile containing display name,
+  base URL, throttle, timeout, retry policy, and diagnostic label.
+- Add a Tenrai profile using `https://api.tenrai.org/v1`; keep the current
+  Jikan profile temporarily for explicit rollback and comparative smoke tests.
+- Replace hardcoded `Jikan` wording in exceptions and logs with the selected
+  profile label while keeping messages bounded and safe.
+- Preserve the `AnimeProvider` interface and all existing payload validation,
+  matching thresholds, conditional refreshes, artwork limits, and transient
+  failure isolation. Compatibility must not weaken validation.
+- Use a project-identifying `User-Agent` and respect `Retry-After` and
+  provider-specific rate-limit responses. Do not add authentication unless
+  Tenrai's official contract later requires it.
+
+### 13.3 — Configuration, defaults, and rollback
+
+- Accept `metadata_provider = tenrai`, `jikan`, or `none`; make `tenrai` the
+  default for new configurations after contract tests pass.
+- Update INI examples, environment-variable validation, Compose settings,
+  deployment templates, `validate-config`, and README reference tables.
+- Preserve an installed operator's explicit provider choice during
+  `make update`. Document the one-line rollback to `jikan` and the offline
+  escape hatch `none`; never silently alternate providers inside one scan.
+- Keep base URLs compiled into trusted profiles rather than accepting an
+  arbitrary URL in the initial migration. A custom endpoint can be planned
+  later with explicit SSRF and trust-boundary controls if self-hosting becomes
+  a requirement.
+- Attribute metadata to Tenrai in user-facing documentation and generated
+  catalogue output where provider attribution is shown.
+
+### 13.4 — Preserve MAL identity and cached data
+
+- Continue using the legacy logical provider key `jikan` in SQLite for the
+  shared MAL ID namespace during this transport-only migration. Document that
+  it identifies the persisted Jikan-compatible MAL schema, not necessarily the
+  selected HTTP host. Do not create a second set of records solely because the
+  transport changed; a future neutral-key migration is out of scope.
+- Ensure existing `rpi-streamer.ini` `mal_id` pins remain authoritative and
+  require no sidecar edits. Scanner reconciliation must not rewrite media
+  directories.
+- Reuse fresh cached provider records after the switch. When a record becomes
+  stale, refresh it from the configured transport and update validators
+  atomically; a failed refresh must retain the last known-good metadata and
+  generated site.
+- Define validator provenance: do not send a Jikan `ETag` or `Last-Modified`
+  value to Tenrai unless tests establish cross-host validity. Store or clear
+  validators per transport while retaining normalized metadata.
+- Keep artwork already downloaded and address filenames independently from the
+  transport name. Download a replacement only when normal refresh rules
+  require it.
+
+### 13.5 — Tests and staged acceptance
+
+- Parameterize the existing provider tests so the shared Jikan-compatible
+  parser and failure behavior run against both endpoint profiles.
+- Add offline Tenrai tests for search, direct pinned details, multi-page
+  episodes, `304`, `404`, `429`, transient `5xx`, retry exhaustion, malformed
+  JSON, oversized responses/artwork, and schema drift.
+- Add migration/continuity tests starting with a schema-v4 database populated
+  through Jikan. Switching to Tenrai must preserve the provider record,
+  `mal_id` pin, relations, episodes, artwork, OpenAI inference cache, and static
+  page identity.
+- Replace the Jikan-only live diagnostic with explicit opt-in Tenrai and Jikan
+  smoke tests. Live tests must be low-volume and never run in the ordinary
+  suite.
+- On the Raspberry Pi, test MAL ID `55842` with a cold refresh and a cached
+  rescan. Acceptance requires successful details and episode retrieval, no
+  repeated provider error on `SIGHUP`, correct metadata rendering, and no
+  OpenAI call for the pinned title identity.
+- Record request count, cold/cached scan duration, peak RSS, response failures,
+  and generated result. Run a temporary Jikan rollback once to prove the
+  operational escape path, then restore Tenrai.
+
+**Documentation/commit:** update the README architecture diagram, provider
+attribution, configuration and troubleshooting sections; update this status
+table after each implemented substep. Commit the migration as
+`feat: switch metadata transport to Tenrai` and mark Step 13 Done only after
+offline compatibility, cache-continuity, rollback, and Raspberry Pi acceptance
+all pass.
 
 ## Cross-cutting quality rules
 
