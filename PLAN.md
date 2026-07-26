@@ -16,7 +16,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 
 | Step | Increment | Status | Completion evidence |
 |---:|---|---|---|
-| 0 | Contract, fixtures, and architecture decision | Pending | Sidecar grammar, data model, precedence, and sanitized fixtures approved |
+| 0 | Contract, fixtures, and architecture decision | Done | Frozen contract, ADR 0008, threat model, three sanitized fixture families, and 118 tests pass |
 | 1 | Multi-work SQLite model and migration | Pending | Existing schema-v5 databases migrate without losing metadata or page identity |
 | 2 | Sidecar work rules and exact media overrides | Pending | Backward-compatible parser applies ranges, seasons, globs, and exact mappings |
 | 3 | Tenrai relation discovery and candidate cache | Pending | Bounded verified candidate graph works online and from cache |
@@ -82,7 +82,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
     episode bounds, confidence, and precedence. See the official
     [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs#structured-outputs-vs-json-mode).
 
-## Proposed sidecar contract
+## Frozen sidecar contract
 
 The existing section remains valid:
 
@@ -217,9 +217,59 @@ missing files, invalid globs, impossible ranges, non-anime IDs, or conflicting
 manual rules are reported as bounded scan errors. A malformed sidecar must not
 remove previously published media or rewrite the media directory.
 
+### Frozen matching semantics and bounds
+
+- Section names must match `[rpi-streamer]`, `[work "NAME"]`, or
+  `[media "NAME"]`. Work/media names are unique, case-sensitive identifiers of
+  1–64 printable characters without quotes or control characters.
+- `files` contains at most eight case-insensitive basename globs per work.
+  Globs use standard `*`, `?`, and character-class behavior; path separators,
+  absolute paths, NULs, and `..` path components are invalid.
+- When a work supplies multiple selectors (`files`, `season`, and
+  `local_episode_range`), all supplied selectors must match.
+- A selectorless rule is permitted only for the primary `mal_id` and acts as a
+  safe single-work fallback after exact rules and ambiguity checks; it is not a
+  catch-all override.
+- `local_episode_range` compares against the conservatively parsed local
+  episode start. `episode_offset` is applied only after a work rule matches and
+  must yield episode endpoints from 1 through 9,999.
+- `kind` is an output classification, not a selector. `episode_end` requires
+  `episode` and cannot be less than it.
+- Exact `file` matching is case-sensitive because it names a concrete local
+  basename. Glob matching is case-insensitive for portability with the
+  scanner's extension behavior.
+- Manual MAL IDs add candidates but become authoritative only after a cached or
+  live provider record verifies them as anime. Offline unverified declarations
+  remain pending.
+- Group labels use each work's preferred provider title under
+  `metadata_language`; a manual `label` overrides it. The collection header,
+  synopsis, genres, and cover remain those of the primary work initially.
+- Hard limits are: 12 work sections, 50 exact media sections, 64 total
+  sections, 12 manual/related candidates, 256 characters per glob, 2,048 total
+  glob characters, 120-character labels, 300-character basenames, episode and
+  absolute offset bounds of 9,999, order 0–10,000, relation depth 3, 12
+  verified candidate works, and 50 filenames per model request. The
+  authoritative table and rationale are in
+  [`docs/MULTI_WORK_THREAT_MODEL.md`](docs/MULTI_WORK_THREAT_MODEL.md).
+
+### Frozen conflict and failure outcomes
+
+| Condition | Outcome |
+|---|---|
+| Exact media override and work rule both match | Exact override wins |
+| Two work rules match one file | Scan issue; retain last valid mapping or leave unmapped |
+| Manual ID is invalid/non-anime | Scan issue; rule is not applied |
+| Manual ID is unverified while offline | Declaration remains pending; no new mapping |
+| Deterministic result conflicts with manual mapping | Manual mapping wins |
+| Model result conflicts with manual/deterministic mapping | Higher-precedence mapping wins |
+| Model returns unknown filename or candidate ID | Reject the affected response as invalid |
+| Episode is outside a known provider count | Reject mapping unless an explicitly allowed non-episode kind applies |
+| Filename is missing after a sidecar edit | Scan issue; no mapping row is created |
+| Sidecar exceeds a frozen bound | Reject the sidecar extension and preserve last-known-good published state |
+
 ## Step 0 — Contract, fixtures, and ADR
 
-**Status: Pending**
+**Status: Done**
 
 - Add sanitized synthetic fixtures representing the supplied failure modes:
   - MF Ghost: 37 files numbered continuously, primary work with 12 provider
@@ -248,6 +298,18 @@ remove previously published media or rewrite the media directory.
 - Ambiguous precedence and invalid configurations have explicit outcomes.
 
 **Commit:** `docs: define multi-work collection mapping`.
+
+**Delivered:** the sidecar grammar, selector semantics, precedence, labels,
+primary presentation, bounds, and failure matrix are frozen above; ADR 0008
+records the architectural decision; the dedicated threat model covers glob,
+filename, provider-graph, model-ID, prompt/log, cost, invalidation, and outage
+risks; and three sanitized fixture families cover 37-file cumulative
+numbering, 12+25 reset numbering, and movie/OVA/summary/ambiguous/numeric
+tie-ins. Fixture IDs are deliberately synthetic, compact JSON expands to the
+required file counts, example sidecars use at most four sections, and no
+personal path, copied HTML, provider response, or media content is stored.
+Ruff, formatting, strict mypy, and 118 offline tests pass; five
+environment-dependent tests skip.
 
 ## Step 1 — Multi-work SQLite model and migration
 

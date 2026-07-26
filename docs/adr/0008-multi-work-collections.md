@@ -1,0 +1,67 @@
+# ADR 0008: Multi-work collections with verified file mappings
+
+- Status: Accepted
+- Date: 2026-07-26
+
+## Context
+
+A local folder can contain several seasons or related media while the current
+catalogue associates it with one MAL record. This flattens cumulative episode
+numbers, omits later provider episode context, and cannot distinguish movies,
+OVAs, summaries, or specials. Real examples include a 37-file collection
+numbered continuously across three seasons and a two-season collection whose
+second-season filenames reset to episode 1.
+
+Folder names and filenames provide useful evidence but do not safely identify
+every tie-in. Model assistance can help with ambiguous release names, but it
+must not invent or verify metadata identities.
+
+## Decision
+
+A filesystem title folder is a local collection with one primary work and zero
+or more related verified MAL works. Each media file may map to at most one
+associated work plus an optional episode range or media kind. Unmapped files
+remain visible and playable.
+
+The existing sidecar gains:
+
+- `[work "NAME"]` rules using verified MAL IDs and bounded basename globs,
+  parsed seasons, or local episode ranges with offsets;
+- `[media "NAME"]` exact-basename overrides for exceptions and tie-ins;
+- optional `related_mal_ids` candidate declarations.
+
+Selectors in one work rule are combined with logical AND. Exact manual
+mappings override manual work rules, which override deterministic mapping,
+which overrides accepted cached or new model mapping. Multiple matching manual
+work rules are an error. A selectorless primary work is only a fallback for
+otherwise safely single-work media; it does not override explicit or
+ambiguous evidence.
+
+All MAL IDs are verified through the configured Jikan-compatible transport or
+an existing normalized cache. Relation discovery is cycle-safe and bounded by
+depth and candidate count. The model receives only verified candidates and
+must choose one of those IDs or `null` through strict Structured Outputs.
+Application validation still enforces filenames, candidate membership,
+episode bounds, confidence, and precedence.
+
+The static title page keeps its stable collection URL, primary header and
+cover, and one video player. The episode selector groups mapped files by the
+preferred provider title in the configured metadata language. Provider
+episode context is rendered per work, and uncertain files appear in an
+`Unmapped` group.
+
+## Consequences
+
+Existing `mal_id` sidecars and single-work pages remain compatible. Common
+continuous and reset numbering layouts can be mapped without model calls.
+Operators can correct any result locally and corrections take effect at the
+next scan.
+
+The persistence model must normalize provider records away from a one-folder
+ownership assumption and add collection-work associations and per-file mapping
+provenance. Relation and inference inputs require bounded caches and
+invalidation. Grouped rendering and migration add complexity, but local
+playback remains independent of provider or model availability.
+
+Arbitrary regular expressions, unverified model IDs, unbounded franchise
+graphs, and silent conflict resolution are deliberately excluded.

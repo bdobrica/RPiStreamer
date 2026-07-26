@@ -18,10 +18,17 @@ images are digest-pinned and should be refreshed deliberately after upstream
 security review. CI actions are major-version pinned; review their release
 notes before updates.
 
-Configuration currently contains no secrets. If optional model-assisted
-matching is implemented, credentials must use a protected environment file,
-systemd credential, or container secret—not the ordinary INI, image, logs, or
-repository.
+Optional model-assisted matching may read an OpenAI API key from the native
+INI, which is installed as `root:rpi-streamer` mode `0640`, or from the
+environment. The key must not appear in normalized configuration output,
+SQLite, prompts, images, logs, generated pages, or the repository. Backups of
+`/etc/rpi-streamer` contain the INI and must be protected as credentials.
+Container deployments should prefer a runtime environment value or secret
+rather than committing a key.
+
+The planned multi-work mapping boundary, including glob, relation-graph,
+candidate, and model-output controls, is documented in the
+[multi-work threat model](MULTI_WORK_THREAT_MODEL.md).
 
 Back up `/etc/rpi-streamer`, `/var/lib/rpi-streamer`, the systemd unit, and the
 Nginx site configuration. The media collection is external and is not included

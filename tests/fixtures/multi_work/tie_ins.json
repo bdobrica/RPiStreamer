@@ -1,0 +1,75 @@
+{
+  "contract_version": 1,
+  "collection": "Synthetic tie-in fixture",
+  "primary_mal_id": 992001,
+  "files": [
+    "Fixture_Show_Movie.mp4",
+    "Fixture_Show_OVA_01.mp4",
+    "Fixture_Show_Battle_Digest.mp4",
+    "Fixture_Show_Bonus.mp4",
+    "Fixture_Show_1080p_2024_07.mp4"
+  ],
+  "works": [
+    {
+      "mal_id": 992001,
+      "title": "Fixture Show",
+      "episode_count": 12,
+      "relation": "primary"
+    },
+    {
+      "mal_id": 992002,
+      "title": "Fixture Show Movie",
+      "episode_count": 1,
+      "relation": "sequel"
+    },
+    {
+      "mal_id": 992003,
+      "title": "Fixture Show OVA",
+      "episode_count": 1,
+      "relation": "side_story"
+    },
+    {
+      "mal_id": 992004,
+      "title": "Fixture Show Digest",
+      "episode_count": 1,
+      "relation": "summary"
+    }
+  ],
+  "expected_mappings": [
+    {
+      "file": "Fixture_Show_Movie.mp4",
+      "mal_id": 992002,
+      "kind": "movie",
+      "episode": null
+    },
+    {
+      "file": "Fixture_Show_OVA_01.mp4",
+      "mal_id": 992003,
+      "kind": "ova",
+      "episode": 1
+    },
+    {
+      "file": "Fixture_Show_Battle_Digest.mp4",
+      "mal_id": 992004,
+      "kind": "summary",
+      "episode": null
+    },
+    {
+      "file": "Fixture_Show_Bonus.mp4",
+      "mal_id": null,
+      "kind": "unknown",
+      "episode": null
+    },
+    {
+      "file": "Fixture_Show_1080p_2024_07.mp4",
+      "mal_id": null,
+      "kind": "unknown",
+      "episode": null
+    }
+  ],
+  "expected": {
+    "file_count": 5,
+    "group_count": 3,
+    "unmapped_count": 2
+  }
+}

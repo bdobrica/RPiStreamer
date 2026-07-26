@@ -1,0 +1,41 @@
+{
+  "contract_version": 1,
+  "collection": "Tsukimichi synthetic reset-numbering fixture",
+  "primary_mal_id": 991001,
+  "file_series": [
+    {
+      "template": "Fixture_Tsukimichi_-_{episode:02d}_1080p.mp4",
+      "start": 1,
+      "end": 12
+    },
+    {
+      "template": "Fixture_Tsukimichi_2nd_Season_-_{episode:02d}_1080p.mp4",
+      "start": 1,
+      "end": 25
+    }
+  ],
+  "works": [
+    {
+      "mal_id": 991001,
+      "title": "Tsukimichi Fixture Season 1",
+      "episode_count": 12,
+      "relation": "primary",
+      "season": 1,
+      "files": ["Fixture_Tsukimichi_-_*.mp4"]
+    },
+    {
+      "mal_id": 991002,
+      "title": "Tsukimichi Fixture Season 2",
+      "episode_count": 25,
+      "relation": "sequel",
+      "season": 2,
+      "files": ["*Tsukimichi_2nd_Season*"]
+    }
+  ],
+  "expected": {
+    "file_count": 37,
+    "group_count": 2,
+    "unmapped_count": 0,
+    "model_calls_with_manual_rules": 0
+  }
+}

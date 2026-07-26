@@ -16,6 +16,7 @@ implemented.
 | [0005](0005-optional-model-assisted-inference.md) | Keep model-assisted inference optional, bounded, and verified |
 | [0006](0006-service-configuration-and-deployment.md) | Share one configuration contract across native and container deployments |
 | [0007](0007-atomicity-security-and-verification.md) | Preserve last-known-good state and test without live dependencies |
+| [0008](0008-multi-work-collections.md) | Model one folder as a collection of verified works and file mappings |
 
 ADRs are immutable once superseded. A later decision should add a new record
 and mark the earlier one superseded rather than rewriting history.

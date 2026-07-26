@@ -1,0 +1,44 @@
+{
+  "contract_version": 1,
+  "collection": "MF Ghost synthetic continuous-numbering fixture",
+  "primary_mal_id": 990001,
+  "file_series": [
+    {
+      "template": "Fixture_MF_Ghost_-_{episode:02d}_1080p.mp4",
+      "start": 1,
+      "end": 37
+    }
+  ],
+  "works": [
+    {
+      "mal_id": 990001,
+      "title": "MF Ghost Fixture Season 1",
+      "episode_count": 12,
+      "relation": "primary",
+      "local_episode_range": [1, 12],
+      "episode_offset": 0
+    },
+    {
+      "mal_id": 990002,
+      "title": "MF Ghost Fixture Season 2",
+      "episode_count": 12,
+      "relation": "sequel",
+      "local_episode_range": [13, 24],
+      "episode_offset": -12
+    },
+    {
+      "mal_id": 990003,
+      "title": "MF Ghost Fixture Season 3",
+      "episode_count": 13,
+      "relation": "sequel",
+      "local_episode_range": [25, 37],
+      "episode_offset": -24
+    }
+  ],
+  "expected": {
+    "file_count": 37,
+    "group_count": 3,
+    "unmapped_count": 0,
+    "model_calls_with_manual_rules": 0
+  }
+}
