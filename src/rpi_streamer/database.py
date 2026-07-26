@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 6
+LATEST_SCHEMA_VERSION: Final = 7
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -618,6 +618,99 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
         PRAGMA foreign_key_check
         """,
     ),
+    7: (
+        """
+        ALTER TABLE media_work_mappings RENAME TO media_work_mappings_v6
+        """,
+        """
+        DROP INDEX media_work_mappings_work_idx
+        """,
+        """
+        CREATE TABLE media_work_mappings (
+            media_file_id INTEGER PRIMARY KEY
+                REFERENCES media_files(id) ON DELETE CASCADE,
+            library_entry_work_id INTEGER NOT NULL
+                REFERENCES library_entry_works(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (
+                kind IN (
+                    'episode', 'movie', 'ova', 'oad', 'ona', 'special',
+                    'summary', 'unknown'
+                )
+            ),
+            episode_start INTEGER CHECK (
+                episode_start IS NULL OR episode_start > 0
+            ),
+            episode_end INTEGER CHECK (
+                episode_end IS NULL OR episode_end > 0
+            ),
+            label TEXT CHECK (label IS NULL OR length(label) > 0),
+            source TEXT NOT NULL CHECK (
+                source IN (
+                    'manual_exact', 'manual_rule', 'deterministic', 'model'
+                )
+            ),
+            confidence REAL CHECK (
+                confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
+            ),
+            model TEXT,
+            schema_version TEXT,
+            input_digest TEXT NOT NULL CHECK (length(input_digest) > 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (
+                (episode_start IS NULL AND episode_end IS NULL)
+                OR
+                (
+                    episode_start IS NOT NULL
+                    AND episode_end IS NOT NULL
+                    AND episode_end >= episode_start
+                )
+            ),
+            CHECK (
+                (
+                    source = 'model'
+                    AND confidence IS NOT NULL
+                    AND model IS NOT NULL AND length(model) > 0
+                    AND schema_version IS NOT NULL
+                    AND length(schema_version) > 0
+                )
+                OR
+                (
+                    source != 'model'
+                    AND model IS NULL
+                    AND schema_version IS NULL
+                )
+            )
+        )
+        """,
+        """
+        INSERT INTO media_work_mappings(
+            media_file_id, library_entry_work_id, kind, episode_start,
+            episode_end, label, source, confidence, model, schema_version,
+            input_digest, created_at, updated_at
+        )
+        SELECT
+            media_file_id, library_entry_work_id,
+            CASE kind
+                WHEN 'recap' THEN 'summary'
+                WHEN 'other' THEN 'unknown'
+                ELSE kind
+            END,
+            episode_start, episode_end, label, source, confidence, model,
+            schema_version, input_digest, created_at, updated_at
+        FROM media_work_mappings_v6
+        """,
+        """
+        DROP TABLE media_work_mappings_v6
+        """,
+        """
+        CREATE INDEX media_work_mappings_work_idx
+        ON media_work_mappings(library_entry_work_id, episode_start, media_file_id)
+        """,
+        """
+        PRAGMA foreign_key_check
+        """,
+    ),
 }
 
 
@@ -1134,6 +1227,70 @@ class CatalogueRepository:
             raise DatabaseError("provider record disappeared after upsert")
         return record
 
+    def upsert_detached_provider_record(
+        self,
+        *,
+        provider: str,
+        provider_id: str,
+        canonical_title: str,
+        raw_data: object,
+        fetched_at: datetime,
+        synopsis: str | None = None,
+        episode_count: int | None = None,
+        etag: str | None = None,
+        last_modified: str | None = None,
+        validator_source: str = "jikan",
+    ) -> ProviderRecord:
+        """Store verified normalized metadata without associating a collection."""
+
+        if episode_count is not None and episode_count < 0:
+            raise ValueError("episode_count must be non-negative")
+        cleaned_provider = _required_text(provider, "provider")
+        cleaned_provider_id = _required_text(provider_id, "provider_id")
+        raw_json = json.dumps(
+            raw_data,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        with self.transaction():
+            self._connection.execute(
+                """
+                INSERT INTO provider_records(
+                    provider, provider_id, canonical_title, synopsis,
+                    episode_count, raw_json, etag, last_modified,
+                    validator_source, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, provider_id) DO UPDATE SET
+                    canonical_title = excluded.canonical_title,
+                    synopsis = excluded.synopsis,
+                    episode_count = excluded.episode_count,
+                    raw_json = excluded.raw_json,
+                    etag = excluded.etag,
+                    last_modified = excluded.last_modified,
+                    validator_source = excluded.validator_source,
+                    fetched_at = excluded.fetched_at
+                """,
+                (
+                    cleaned_provider,
+                    cleaned_provider_id,
+                    _required_text(canonical_title, "canonical_title"),
+                    synopsis,
+                    episode_count,
+                    raw_json,
+                    etag,
+                    last_modified,
+                    _required_text(validator_source, "validator_source"),
+                    _utc_text(fetched_at),
+                ),
+            )
+        record = self.get_provider_record_by_provider_id(
+            cleaned_provider, cleaned_provider_id
+        )
+        if record is None:
+            raise DatabaseError("provider record disappeared after detached upsert")
+        return record
+
     def get_provider_record(
         self, library_entry_id: int, provider: str
     ) -> ProviderRecord | None:
@@ -1185,6 +1342,38 @@ class CatalogueRepository:
             (library_entry_id,),
         ).fetchone()
         return None if row is None else _library_entry_work(row)
+
+    def get_library_entry_work_by_provider_id(
+        self, library_entry_id: int, provider: str, provider_id: str
+    ) -> LibraryEntryWork | None:
+        row = self._connection.execute(
+            """
+            SELECT works.*
+            FROM library_entry_works AS works
+            JOIN provider_records AS records
+              ON records.id = works.provider_record_id
+            WHERE works.library_entry_id = ?
+              AND records.provider = ?
+              AND records.provider_id = ?
+            """,
+            (library_entry_id, provider, provider_id),
+        ).fetchone()
+        return None if row is None else _library_entry_work(row)
+
+    def get_provider_record_for_work(
+        self, library_entry_work_id: int
+    ) -> ProviderRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT records.*
+            FROM library_entry_works AS works
+            JOIN provider_records AS records
+              ON records.id = works.provider_record_id
+            WHERE works.id = ?
+            """,
+            (library_entry_work_id,),
+        ).fetchone()
+        return None if row is None else _provider_record(row)
 
     def associate_library_entry_work(
         self,
@@ -1336,6 +1525,63 @@ class CatalogueRepository:
             (media_file_id,),
         ).fetchone()
         return None if row is None else _media_work_mapping(row)
+
+    def remove_stale_manual_mappings(
+        self, library_entry_id: int, retained_media_file_ids: set[int]
+    ) -> None:
+        placeholders = ",".join("?" for _ in retained_media_file_ids)
+        retained_clause = (
+            f"AND mappings.media_file_id NOT IN ({placeholders})"
+            if retained_media_file_ids
+            else ""
+        )
+        with self.transaction():
+            self._connection.execute(
+                f"""
+                DELETE FROM media_work_mappings
+                WHERE media_file_id IN (
+                    SELECT mappings.media_file_id
+                    FROM media_work_mappings AS mappings
+                    JOIN media_files AS media
+                      ON media.id = mappings.media_file_id
+                    WHERE media.library_entry_id = ?
+                      AND mappings.source IN ('manual_exact', 'manual_rule')
+                      {retained_clause}
+                )
+                """,
+                (library_entry_id, *sorted(retained_media_file_ids)),
+            )
+
+    def remove_stale_manual_work_associations(
+        self, library_entry_id: int, retained_provider_record_ids: set[int]
+    ) -> None:
+        placeholders = ",".join("?" for _ in retained_provider_record_ids)
+        retained_clause = (
+            f"AND provider_record_id NOT IN ({placeholders})"
+            if retained_provider_record_ids
+            else ""
+        )
+        with self.transaction():
+            self._connection.execute(
+                f"""
+                DELETE FROM library_entry_works
+                WHERE library_entry_id = ?
+                  AND source = 'manual'
+                  AND is_primary = 0
+                  {retained_clause}
+                """,
+                (library_entry_id, *sorted(retained_provider_record_ids)),
+            )
+
+    def get_mapping_rules_digest(self, library_entry_id: int) -> str | None:
+        row = self._connection.execute(
+            """
+            SELECT rules_digest FROM library_entry_mapping_state
+            WHERE library_entry_id = ?
+            """,
+            (library_entry_id,),
+        ).fetchone()
+        return None if row is None else str(row["rules_digest"])
 
     def set_mapping_rules_digest(
         self, library_entry_id: int, rules_digest: str, *, updated_at: datetime

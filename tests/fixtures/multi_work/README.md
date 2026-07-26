@@ -15,6 +15,6 @@ but are not copied media names. The JSON files are compact contracts, not
 provider response recordings. The INI files demonstrate that ordinary
 episodes can be mapped with a few work rules rather than one section per file.
 
-The current production sidecar parser does not accept these new sections yet;
-Step 2 implements that behavior. `tests/test_multi_work_contract.py` validates
-the frozen fixture shape and expected grouping independently in the meantime.
+The production sidecar parser accepts these sections. The fixtures remain the
+sanitized contract and regression inputs for manual and later automatic
+mapping stages.

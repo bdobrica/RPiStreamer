@@ -18,7 +18,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 |---:|---|---|---|
 | 0 | Contract, fixtures, and architecture decision | Done | Frozen contract, ADR 0008, threat model, three sanitized fixture families, and 118 tests pass |
 | 1 | Multi-work SQLite model and migration | Done | Schema 6 migration preserves provider graphs/IDs, adds constrained associations and mappings, and 122 tests pass |
-| 2 | Sidecar work rules and exact media overrides | Pending | Backward-compatible parser applies ranges, seasons, globs, and exact mappings |
+| 2 | Sidecar work rules and exact media overrides | Done | Bounded parser, cached/live verification, digest reconciliation, manual precedence, and 135 tests pass |
 | 3 | Tenrai relation discovery and candidate cache | Pending | Bounded verified candidate graph works online and from cache |
 | 4 | Deterministic file-to-work mapping | Pending | MF Ghost and Tsukimichi map without model calls where rules or filenames suffice |
 | 5 | Structured LLM-assisted mapping | Pending | Unresolved files receive validated, cached candidate mappings within the call budget |
@@ -370,7 +370,7 @@ rollback, reopen, sharing, constraint, cascade, and preservation tests pass.
 
 ## Step 2 — Sidecar parser and manual mappings
 
-**Status: Pending**
+**Status: Done**
 
 - Extend sidecar parsing to accept `[rpi-streamer]`, `[work "NAME"]`, and
   `[media "NAME"]` sections while retaining interpolation-free UTF-8 parsing.
@@ -407,6 +407,16 @@ rollback, reopen, sharing, constraint, cascade, and preservation tests pass.
 
 **Documentation/commit:** publish the final sidecar grammar and examples;
 commit as `feat: support manual multi-work mappings`.
+
+**Completion:** the UTF-8 interpolation-free parser implements the frozen
+root/work/media grammar and bounds. Manual IDs use normalized cache records or
+the configured live provider verifier; unavailable declarations remain
+pending. Exact overrides and AND-combined work selectors reconcile by
+canonical digest, preserve unchanged rows, remove stale manual results, and
+supersede lower-precedence mappings. Malformed, missing, overlapping, or
+offline rules produce bounded partial-scan issues without discarding the last
+valid mapping. The cumulative 37-file and reset-numbered 12+25 fixtures map
+entirely from manual rules.
 
 ## Step 3 — Tenrai relation discovery and candidates
 

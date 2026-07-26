@@ -316,6 +316,76 @@ class MultiWorkMigrationTestCase(unittest.TestCase):
                 )
             )
 
+    def test_schema_six_mapping_kinds_migrate_to_public_vocabulary(self) -> None:
+        connection = sqlite3.connect(self.path)
+        connection.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY CHECK (version > 0),
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        for version in range(1, 7):
+            for statement in _MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations VALUES (?, ?)",
+                (version, "2026-01-01T00:00:00+00:00"),
+            )
+        connection.execute(
+            """
+            INSERT INTO library_entries VALUES (
+                1, 'Show', 'Show', 'Show', 1, 1, NULL, NULL,
+                '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO media_files VALUES (
+                1, 1, 'Show/recap.mp4', 'recap.mp4', 1, 1, NULL, 1,
+                '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00', NULL, NULL, NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO provider_records VALUES (
+                1, 'jikan', '1', 'Show', NULL, 1, '{}', NULL, NULL,
+                '2026-01-01T00:00:00+00:00', 'tenrai'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO library_entry_works VALUES (
+                1, 1, 1, 1, 'primary', NULL, 0, 'matched', NULL,
+                '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO media_work_mappings VALUES (
+                1, 1, 'recap', NULL, NULL, NULL, 'deterministic', NULL,
+                NULL, NULL, 'digest', '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00'
+            )
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        with CatalogueRepository(self.path) as repository:
+            mapping = repository.get_media_work_mapping(1)
+            assert mapping is not None
+            self.assertEqual(mapping.kind, "summary")
+            self.assertEqual(repository.schema_version, LATEST_SCHEMA_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()

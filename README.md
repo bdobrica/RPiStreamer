@@ -183,7 +183,9 @@ episode hints remain separate and take precedence; a model hint is displayed
 only at confidence `0.8` or higher, while the filename and media URL stay
 authoritative.
 
-An optional UTF-8 `rpi-streamer.ini` in a title directory supports:
+An optional UTF-8 `rpi-streamer.ini` in a title directory supports collection
+metadata, multiple verified works, and exact file overrides. The original
+single-work form remains valid:
 
 ```ini
 [rpi-streamer]
@@ -193,11 +195,83 @@ metadata_enabled = true
 mal_id = 1
 ```
 
-All keys are optional. `display_title` and `sort_title` must be non-empty when
-present, `metadata_enabled` uses the same boolean forms as the main config,
-and `mal_id` must be a positive integer. A MAL pin is stored for the `jikan`
-provider. Unknown sections/keys and malformed values are reported as scan
-errors; safe folder-derived defaults are still catalogued.
+All root keys are optional. `display_title` and `sort_title` must be non-empty
+when present, `metadata_enabled` uses the main configuration’s boolean forms,
+and `mal_id` is the primary positive MAL anime ID. `related_mal_ids` is an
+optional comma-separated candidate list:
+
+```ini
+[rpi-streamer]
+display_title = MF Ghost
+mal_id = 50695
+related_mal_ids = 12345, 67890
+
+[work "season-1"]
+mal_id = 50695
+local_episode_range = 1-12
+order = 10
+
+[work "season-2"]
+mal_id = 12345
+local_episode_range = 13-24
+episode_offset = -12
+order = 20
+
+[work "season-3"]
+mal_id = 67890
+local_episode_range = 25-37
+episode_offset = -24
+order = 30
+```
+
+Only `50695` in this example is a real verified ID; replace the related
+placeholder IDs with the IDs returned by Tenrai/MAL for your collection.
+
+Each `[work "NAME"]` requires `mal_id`. Optional selectors are `files`
+(multiline case-insensitive basename globs), `season`, and
+`local_episode_range`; all supplied selectors must match. `episode_offset` is
+applied after matching. Optional output fields are `label`, `kind`, and
+non-negative `order`. A selectorless rule is permitted only for the primary
+work and is used only as a safe single-work fallback.
+
+Use `[media "NAME"]` for an exception. Its `file` is an exact,
+case-sensitive basename—not a path—and wins over every work rule:
+
+```ini
+[media "battle-digest"]
+file = AnimePahe_MF_Ghost_Battle_Digest.mp4
+mal_id = 54321
+kind = summary
+label = Battle Digest
+
+[media "special-1"]
+file = AnimePahe_MF_Ghost_Special_01.mp4
+mal_id = 98765
+kind = special
+episode = 1
+```
+
+The exact-override IDs above are placeholders and must likewise be replaced
+with verified IDs.
+
+Media overrides also accept `episode_end`; it requires `episode` and cannot be
+smaller. Supported kinds are `episode`, `movie`, `ova`, `oad`, `ona`,
+`special`, `summary`, and `unknown`. Episode endpoints are 1–9,999, offsets
+are −9,999–9,999, and order is 0–10,000. The parser permits at most 12 work
+sections, 50 exact overrides, 12 distinct candidate IDs, eight globs per work,
+256 characters per glob, and 2,048 glob characters overall. Section names,
+labels, basenames, and total sections are bounded as described in
+[`docs/MULTI_WORK_THREAT_MODEL.md`](docs/MULTI_WORK_THREAT_MODEL.md).
+
+Every declared ID must already be cached or verify through the configured
+Tenrai/Jikan-compatible anime endpoint. During an outage, uncached rules stay
+pending and the previous valid mapping is retained. Exact overrides take
+precedence over work rules; two matching work rules are a scan error and do
+not replace the last valid mapping. Rule changes are digest-reconciled, so
+unchanged mapping rows remain stable and removed rules delete only their own
+derived mappings. Unknown sections/keys, missing exact files, unsafe or
+unmatched globs, and malformed values make the scan partial without rewriting
+the media tree or discarding prior sidecar-derived state.
 
 The conventional `lost+found` directory is ignored only when it is directly
 under `media_root`, preventing an ext filesystem recovery directory from
@@ -776,7 +850,7 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 6 contains:
+Schema version 7 contains:
 
 | Table | Stored data |
 |---|---|
@@ -829,6 +903,10 @@ multi-work reconciliation stage; current pages continue to resolve the
 primary association and therefore keep their collection slug, metadata, and
 player ordering.
 
+Schema 7 aligns stored mapping kinds with the public sidecar vocabulary and
+preserves schema-6 mappings (`recap` becomes `summary`; `other` becomes
+`unknown`).
+
 ### Database backup and restore
 
 Generated HTML is disposable, but `catalogue.db` contains mapping and cached
@@ -841,8 +919,8 @@ sqlite3 /var/lib/rpi-streamer/catalogue.db \
   ".backup '/path/to/backup/catalogue.db'"
 ```
 
-Take and retain a verified backup before upgrading a schema-5 installation.
-The schema-6 normalization is forward-only: an older RPi Streamer binary
+Take and retain a verified backup before upgrading a schema-5 or schema-6
+installation. Schema normalization is forward-only: an older RPi Streamer binary
 cannot read the migrated database, and restoring only the database while
 leaving newer generated/state files can produce an inconsistent rollback.
 

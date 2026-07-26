@@ -589,6 +589,46 @@ def enrich_catalogue(
     return EnrichmentResult(enriched, cached, unmatched, disabled, tuple(errors))
 
 
+def verify_provider_work(
+    repository: CatalogueRepository,
+    provider: AnimeProvider,
+    provider_id: str,
+    *,
+    metadata_language: str,
+    now: datetime,
+) -> ProviderRecord:
+    """Fetch and cache one manually declared provider work without ownership."""
+
+    cached = repository.get_provider_record_by_provider_id(provider.name, provider_id)
+    if cached is not None:
+        return cached
+    result = provider.details(provider_id)
+    if result.not_modified or result.details is None:
+        raise ProviderError("provider returned no details for an uncached manual work")
+    details = result.details
+    if details.provider_id != provider_id:
+        raise ProviderError("provider returned a different manual work ID")
+    episodes = provider.episodes(provider_id)
+    with repository.transaction():
+        record = repository.upsert_detached_provider_record(
+            provider=provider.name,
+            provider_id=details.provider_id,
+            canonical_title=_preferred_title(details, metadata_language),
+            synopsis=details.synopsis,
+            episode_count=details.episode_count,
+            raw_data=details.raw_data,
+            etag=details.validators.etag,
+            last_modified=details.validators.last_modified,
+            validator_source=provider.transport_name,
+            fetched_at=now,
+        )
+        repository.replace_aliases(record.id, details.aliases)
+        repository.replace_genres(record.id, details.genres)
+        repository.replace_relations(record.id, details.relations)
+        repository.replace_provider_episodes(record.id, episodes)
+    return record
+
+
 def _infer_episodes_nonfatal(
     repository: CatalogueRepository,
     entry: LibraryEntry,

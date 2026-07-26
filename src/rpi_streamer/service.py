@@ -20,10 +20,16 @@ from types import FrameType
 from typing import Final, TextIO, cast
 
 from rpi_streamer.config import Settings
-from rpi_streamer.database import CatalogueRepository, ScanRun
+from rpi_streamer.database import CatalogueRepository, ProviderRecord, ScanRun
 from rpi_streamer.generator import GeneratedSite, generate_site
 from rpi_streamer.inference import OpenAIInferenceClient
-from rpi_streamer.metadata import JikanProvider, TenraiProvider, enrich_catalogue
+from rpi_streamer.metadata import (
+    JikanProvider,
+    ProviderError,
+    TenraiProvider,
+    enrich_catalogue,
+    verify_provider_work,
+)
 from rpi_streamer.scanner import scan_library
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +61,7 @@ def run_once(settings: Settings) -> RunSummary:
 
     with CatalogueRepository(settings.database_path) as repository:
         enrich = None
+        verify_work = None
         if settings.metadata_provider in {"jikan", "tenrai"}:
             provider = (
                 TenraiProvider()
@@ -87,7 +94,31 @@ def run_once(settings: Settings) -> RunSummary:
                     now=scanned_at,
                 ).errors
 
-        result = scan_library(repository, settings.media_root, enrich=enrich)
+            def verify_work(
+                repository: CatalogueRepository,
+                provider_id: str,
+                scanned_at: datetime,
+            ) -> tuple[ProviderRecord | None, str | None]:
+                try:
+                    return (
+                        verify_provider_work(
+                            repository,
+                            provider,
+                            provider_id,
+                            metadata_language=settings.metadata_language,
+                            now=scanned_at,
+                        ),
+                        None,
+                    )
+                except (ProviderError, ValueError, OSError) as error:
+                    return None, str(error)
+
+        result = scan_library(
+            repository,
+            settings.media_root,
+            enrich=enrich,
+            verify_work=verify_work,
+        )
         if result.summary:
             LOGGER.warning(
                 "event=scan_issues scan_id=%d errors=%d details=%s",

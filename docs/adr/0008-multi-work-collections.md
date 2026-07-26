@@ -77,5 +77,17 @@ delete a normalized provider record still referenced by another collection.
 The migration is one transaction and performs a foreign-key integrity check
 before recording completion.
 
+Schema version 7 and the sidecar reconciliation layer implement the manual
+control boundary. Parsing is interpolation-free and bounded by the threat
+model. Exact filenames are case-sensitive basenames; work globs are
+case-insensitive, basename-only, and compared only with the collection’s
+discovered files. A canonical rules digest stabilizes unchanged mappings and
+limits invalidation to derived rows.
+
+Manual IDs become associations only after normalized-cache or live
+Jikan-compatible anime verification. Uncached IDs remain pending during an
+outage. Exact overrides precede AND-combined work selectors, and overlapping
+work rules retain the last valid result while making the scan partial.
+
 Arbitrary regular expressions, unverified model IDs, unbounded franchise
 graphs, and silent conflict resolution are deliberately excluded.

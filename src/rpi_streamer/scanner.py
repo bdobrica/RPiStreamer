@@ -11,13 +11,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from rpi_streamer.config import parse_bool
-from rpi_streamer.database import CatalogueRepository, ScanRun
+from rpi_streamer.database import CatalogueRepository, ProviderRecord, ScanRun
+from rpi_streamer.sidecar import (
+    MediaOverride,
+    Sidecar,
+    WorkRule,
+    read_sidecar,
+    validate_local_files,
+)
 
 SIDECAR_NAME: Final = "rpi-streamer.ini"
 SIDECAR_SECTION: Final = "rpi-streamer"
 SUPPORTED_EXTENSIONS: Final = frozenset({".mp4"})
 Enricher = Callable[[CatalogueRepository, datetime], Sequence[str]]
+WorkVerifier = Callable[
+    [CatalogueRepository, str, datetime], tuple[ProviderRecord | None, str | None]
+]
 
 _NATURAL_PART_RE: Final = re.compile(r"(\d+)")
 _SEASON_EPISODE_RE: Final = re.compile(
@@ -33,8 +42,12 @@ _LEADING_EPISODE_RE: Final = re.compile(
     r"(?=$|[ ._-])",
     re.IGNORECASE,
 )
-_SIDECAR_KEYS: Final = frozenset(
-    {"display_title", "sort_title", "metadata_enabled", "mal_id"}
+_ANY_EPISODE_RE: Final = re.compile(
+    r"(?:^|[ ._-])(\d{1,4})(?:\s*[-~]\s*(\d{1,4}))?(?=$|[ ._-])"
+)
+_ORDINAL_SEASON_RE: Final = re.compile(
+    r"(?<![A-Za-z0-9])(\d{1,3})(?:st|nd|rd|th)[ ._-]*season",
+    re.IGNORECASE,
 )
 
 
@@ -42,14 +55,6 @@ _SIDECAR_KEYS: Final = frozenset(
 class ScanIssue:
     path: str
     message: str
-
-
-@dataclass(frozen=True, slots=True)
-class Sidecar:
-    display_title: str | None = None
-    sort_title: str | None = None
-    metadata_enabled: bool = True
-    mal_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +76,8 @@ class DiscoveredTitle:
     pinned_provider: str | None
     pinned_provider_id: str | None
     files: tuple[DiscoveredFile, ...]
+    sidecar: Sidecar
+    sidecar_valid: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +205,15 @@ def discover(media_root: Path) -> Discovery:
             )
         if not files:
             continue
+        try:
+            validate_local_files(sidecar, {item.filename for item in files})
+        except ValueError as error:
+            sidecar_issue = ScanIssue(
+                (directory_path / SIDECAR_NAME).relative_to(root).as_posix(),
+                f"invalid sidecar: {error}",
+            )
+            issues.append(sidecar_issue)
+            sidecar = Sidecar()
         derived_title = _derive_title(directory_path.name)
         title = sidecar.display_title or derived_title
         sort_title = sidecar.sort_title or title
@@ -210,6 +226,8 @@ def discover(media_root: Path) -> Discovery:
                 pinned_provider="jikan" if sidecar.mal_id is not None else None,
                 pinned_provider_id=sidecar.mal_id,
                 files=tuple(files),
+                sidecar=sidecar,
+                sidecar_valid=sidecar_issue is None,
             )
         )
 
@@ -223,6 +241,7 @@ def scan_library(
     *,
     scanned_at: datetime | None = None,
     enrich: Enricher | None = None,
+    verify_work: WorkVerifier | None = None,
 ) -> ScanRun:
     """Discover and reconcile one scan, recording success or partial status."""
 
@@ -233,14 +252,27 @@ def scan_library(
         with repository.transaction():
             for title in discovery.titles:
                 _relocate_title_if_matched(repository, title)
+                previous = repository.get_library_entry(title.relative_path)
+                if not title.sidecar_valid and previous is not None:
+                    title_value = previous.title
+                    sort_title = previous.sort_title
+                    metadata_enabled = previous.metadata_enabled
+                    pinned_provider = previous.pinned_provider
+                    pinned_provider_id = previous.pinned_provider_id
+                else:
+                    title_value = title.title
+                    sort_title = title.sort_title
+                    metadata_enabled = title.metadata_enabled
+                    pinned_provider = title.pinned_provider
+                    pinned_provider_id = title.pinned_provider_id
                 entry = repository.upsert_library_entry(
                     relative_path=title.relative_path,
-                    title=title.title,
-                    sort_title=title.sort_title,
+                    title=title_value,
+                    sort_title=sort_title,
                     seen_at=timestamp,
-                    metadata_enabled=title.metadata_enabled,
-                    pinned_provider=title.pinned_provider,
-                    pinned_provider_id=title.pinned_provider_id,
+                    metadata_enabled=metadata_enabled,
+                    pinned_provider=pinned_provider,
+                    pinned_provider_id=pinned_provider_id,
                 )
                 for media in title.files:
                     existing = repository.get_media_file_by_identity(
@@ -269,9 +301,16 @@ def scan_library(
                     repository.mark_unseen_media_unavailable(entry.id, timestamp)
                 repository.mark_unseen_entries_unavailable(timestamp)
         metadata_errors = () if enrich is None else tuple(enrich(repository, timestamp))
+        mapping_errors = _reconcile_manual_mappings(
+            repository,
+            discovery.titles,
+            timestamp,
+            verify_work=verify_work,
+        )
         issues = (
             *discovery.issues,
             *(ScanIssue("metadata", error) for error in metadata_errors),
+            *(ScanIssue("mapping", error) for error in mapping_errors),
         )
         status = "partial" if issues else "success"
         summary = _summary(issues)
@@ -319,30 +358,335 @@ def _relocate_title_if_matched(
             )
 
 
-def _read_sidecar(path: Path, root: Path) -> tuple[Sidecar, ScanIssue | None]:
-    if not path.exists():
-        return Sidecar(), None
-    parser = configparser.ConfigParser(interpolation=None)
-    try:
-        with path.open(encoding="utf-8") as stream:
-            parser.read_file(stream)
-        if parser.sections() != [SIDECAR_SECTION]:
-            raise ValueError(f"must contain only [{SIDECAR_SECTION}]")
-        values = dict(parser[SIDECAR_SECTION])
-        unknown = sorted(set(values) - _SIDECAR_KEYS)
-        if unknown:
-            raise ValueError(f"unknown option(s): {', '.join(unknown)}")
-        display_title = _optional_text(values.get("display_title"))
-        sort_title = _optional_text(values.get("sort_title"))
-        metadata_enabled = parse_bool(
-            values.get("metadata_enabled", "true"), name="metadata_enabled"
+def _reconcile_manual_mappings(
+    repository: CatalogueRepository,
+    titles: Sequence[DiscoveredTitle],
+    timestamp: datetime,
+    *,
+    verify_work: WorkVerifier | None,
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    for title in titles:
+        if not title.sidecar_valid:
+            continue
+        entry = repository.get_library_entry(title.relative_path)
+        if entry is None:
+            continue
+        sidecar = title.sidecar
+        records: dict[str, ProviderRecord] = {}
+        pending = False
+        for provider_id in sidecar.manual_candidate_ids:
+            record = repository.get_provider_record_by_provider_id("jikan", provider_id)
+            verification_error: str | None = None
+            if record is None and verify_work is not None:
+                record, verification_error = verify_work(
+                    repository, provider_id, timestamp
+                )
+            if record is None:
+                pending = True
+                detail = verification_error or "not cached and provider unavailable"
+                errors.append(
+                    f"{title.relative_path}: MAL ID {provider_id} pending: {detail}"
+                )
+            else:
+                records[provider_id] = record
+
+        work_by_id: dict[str, int] = {}
+        retained_record_ids: set[int] = set()
+        for provider_id, record in records.items():
+            rule = next(
+                (item for item in sidecar.works if item.mal_id == provider_id),
+                None,
+            )
+            existing = repository.get_library_entry_work_by_provider_id(
+                entry.id, "jikan", provider_id
+            )
+            is_primary = provider_id == sidecar.mal_id
+            if existing is not None and rule is None:
+                work = existing
+            else:
+                local_name = (
+                    rule.name
+                    if rule is not None
+                    else (
+                        existing.local_name
+                        if existing is not None
+                        else f"manual-{provider_id}"
+                    )
+                )
+                work = repository.associate_library_entry_work(
+                    library_entry_id=entry.id,
+                    provider_record_id=record.id,
+                    local_name=local_name,
+                    source="manual",
+                    verified_at=timestamp,
+                    is_primary=is_primary,
+                    label=None if rule is None else rule.label,
+                    display_order=0 if rule is None else rule.order,
+                )
+            work_by_id[provider_id] = work.id
+            retained_record_ids.add(record.id)
+
+        exact_by_file = {item.file: item for item in sidecar.media}
+        retained_media_ids: set[int] = set()
+        conflict = False
+        for discovered in title.files:
+            media = repository.get_media_file_by_identity(discovered.local_identity)
+            if media is None:
+                continue
+            override = exact_by_file.get(discovered.filename)
+            if override is not None:
+                if override.mal_id not in work_by_id:
+                    continue
+                override_kind = override.kind or (
+                    "episode" if override.episode is not None else "unknown"
+                )
+                if _exceeds_provider_episode_count(
+                    records[override.mal_id],
+                    override_kind,
+                    override.episode_end,
+                ):
+                    conflict = True
+                    errors.append(
+                        f"{title.relative_path}: {discovered.filename}: "
+                        "episode exceeds verified provider count"
+                    )
+                    continue
+                _apply_exact_mapping(
+                    repository,
+                    media.id,
+                    work_by_id[override.mal_id],
+                    override,
+                    sidecar.digest,
+                    timestamp,
+                )
+                retained_media_ids.add(media.id)
+                continue
+            season, episode_start, episode_end = _manual_facts(discovered.filename)
+            matches = [
+                rule
+                for rule in sidecar.works
+                if rule.matches(
+                    discovered.filename,
+                    season=season,
+                    episode_start=episode_start,
+                )
+            ]
+            if not matches:
+                selectorless = [
+                    rule
+                    for rule in sidecar.works
+                    if rule.mal_id == sidecar.mal_id
+                    and not rule.files
+                    and rule.season is None
+                    and rule.local_episode_start is None
+                ]
+                if len(sidecar.works) == 1:
+                    matches = selectorless
+            if len(matches) > 1:
+                conflict = True
+                errors.append(
+                    f"{title.relative_path}: {discovered.filename}: "
+                    "multiple manual work rules match"
+                )
+                current = repository.get_media_work_mapping(media.id)
+                if current is not None and current.source.startswith("manual_"):
+                    retained_media_ids.add(media.id)
+                continue
+            if not matches:
+                continue
+            rule = matches[0]
+            work_id = work_by_id.get(rule.mal_id)
+            if work_id is None:
+                continue
+            mapped_start = (
+                None if episode_start is None else episode_start + rule.episode_offset
+            )
+            mapped_end = (
+                None if episode_end is None else episode_end + rule.episode_offset
+            )
+            if (
+                mapped_start is not None
+                and not 1 <= mapped_start <= 9999
+                or mapped_end is not None
+                and not 1 <= mapped_end <= 9999
+            ):
+                conflict = True
+                errors.append(
+                    f"{title.relative_path}: {discovered.filename}: "
+                    "episode offset is outside 1-9999"
+                )
+                continue
+            mapped_kind = rule.kind or (
+                "episode" if mapped_start is not None else "unknown"
+            )
+            if _exceeds_provider_episode_count(
+                records[rule.mal_id], mapped_kind, mapped_end
+            ):
+                conflict = True
+                errors.append(
+                    f"{title.relative_path}: {discovered.filename}: "
+                    "episode exceeds verified provider count"
+                )
+                continue
+            _apply_rule_mapping(
+                repository,
+                media.id,
+                work_id,
+                rule,
+                discovered.filename,
+                mapped_start,
+                mapped_end,
+                sidecar.digest,
+                timestamp,
+            )
+            retained_media_ids.add(media.id)
+
+        if not pending and not conflict:
+            repository.remove_stale_manual_mappings(entry.id, retained_media_ids)
+            repository.remove_stale_manual_work_associations(
+                entry.id, retained_record_ids
+            )
+        repository.set_mapping_rules_digest(
+            entry.id, sidecar.digest, updated_at=timestamp
         )
-        mal_id = _optional_text(values.get("mal_id"))
-        if mal_id is not None and not mal_id.isdecimal():
-            raise ValueError("mal_id must be a positive integer")
-        if mal_id is not None and int(mal_id) <= 0:
-            raise ValueError("mal_id must be a positive integer")
-        return Sidecar(display_title, sort_title, metadata_enabled, mal_id), None
+    return tuple(errors)
+
+
+def _exceeds_provider_episode_count(
+    record: ProviderRecord, kind: str, episode_end: int | None
+) -> bool:
+    return (
+        kind == "episode"
+        and episode_end is not None
+        and record.episode_count is not None
+        and episode_end > record.episode_count
+    )
+
+
+def _apply_exact_mapping(
+    repository: CatalogueRepository,
+    media_file_id: int,
+    work_id: int,
+    override: MediaOverride,
+    rules_digest: str,
+    timestamp: datetime,
+) -> None:
+    digest = _mapping_digest(rules_digest, "exact", override.name, override.file)
+    kind = override.kind or ("episode" if override.episode is not None else "unknown")
+    _set_mapping_if_changed(
+        repository,
+        media_file_id=media_file_id,
+        library_entry_work_id=work_id,
+        kind=kind,
+        episode_start=override.episode,
+        episode_end=override.episode_end,
+        label=override.label,
+        source="manual_exact",
+        input_digest=digest,
+        mapped_at=timestamp,
+    )
+
+
+def _apply_rule_mapping(
+    repository: CatalogueRepository,
+    media_file_id: int,
+    work_id: int,
+    rule: WorkRule,
+    filename: str,
+    episode_start: int | None,
+    episode_end: int | None,
+    rules_digest: str,
+    timestamp: datetime,
+) -> None:
+    digest = _mapping_digest(rules_digest, "work", rule.name, filename)
+    kind = rule.kind or ("episode" if episode_start is not None else "unknown")
+    _set_mapping_if_changed(
+        repository,
+        media_file_id=media_file_id,
+        library_entry_work_id=work_id,
+        kind=kind,
+        episode_start=episode_start,
+        episode_end=episode_end,
+        label=None,
+        source="manual_rule",
+        input_digest=digest,
+        mapped_at=timestamp,
+    )
+
+
+def _set_mapping_if_changed(
+    repository: CatalogueRepository,
+    *,
+    media_file_id: int,
+    library_entry_work_id: int,
+    kind: str,
+    episode_start: int | None,
+    episode_end: int | None,
+    label: str | None,
+    source: str,
+    input_digest: str,
+    mapped_at: datetime,
+) -> None:
+    current = repository.get_media_work_mapping(media_file_id)
+    if current is not None and all(
+        (
+            current.library_entry_work_id == library_entry_work_id,
+            current.kind == kind,
+            current.episode_start == episode_start,
+            current.episode_end == episode_end,
+            current.label == label,
+            current.source == source,
+            current.input_digest == input_digest,
+        )
+    ):
+        return
+    repository.set_media_work_mapping(
+        media_file_id=media_file_id,
+        library_entry_work_id=library_entry_work_id,
+        kind=kind,
+        episode_start=episode_start,
+        episode_end=episode_end,
+        label=label,
+        source=source,
+        input_digest=input_digest,
+        mapped_at=mapped_at,
+    )
+
+
+def _mapping_digest(*parts: str) -> str:
+    import hashlib
+
+    return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+
+
+def _manual_facts(filename: str) -> tuple[int | None, int | None, int | None]:
+    stem = Path(filename).stem
+    season: int | None = None
+    episode_start: int | None = None
+    episode_end: int | None = None
+    match = _SEASON_EPISODE_RE.search(stem)
+    if match:
+        season = int(match.group(1))
+        episode_start = int(match.group(2))
+        episode_end = episode_start if match.group(3) is None else int(match.group(3))
+        return season, episode_start, episode_end
+    season_match = _ORDINAL_SEASON_RE.search(stem)
+    if season_match:
+        season = int(season_match.group(1))
+    matches = list(_ANY_EPISODE_RE.finditer(stem))
+    if matches:
+        match = matches[-1]
+        episode_start = int(match.group(1))
+        episode_end = episode_start if match.group(2) is None else int(match.group(2))
+    if season is None and episode_start is not None:
+        season = 1
+    return season, episode_start, episode_end
+
+
+def _read_sidecar(path: Path, root: Path) -> tuple[Sidecar, ScanIssue | None]:
+    try:
+        return read_sidecar(path), None
     except (OSError, UnicodeError, configparser.Error, ValueError) as error:
         relative = path.relative_to(root).as_posix()
         return Sidecar(), ScanIssue(relative, f"invalid sidecar: {error}")
@@ -351,15 +695,6 @@ def _read_sidecar(path: Path, root: Path) -> tuple[Sidecar, ScanIssue | None]:
 def _derive_title(folder_name: str) -> str:
     derived = re.sub(r"[._]+", " ", folder_name)
     return " ".join(derived.split()) or folder_name
-
-
-def _optional_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    cleaned = value.strip()
-    if not cleaned:
-        raise ValueError("title override must not be empty")
-    return cleaned
 
 
 def _display_path(root: Path, path: Path) -> str:
