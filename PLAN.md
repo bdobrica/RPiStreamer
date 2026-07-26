@@ -20,7 +20,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | 1 | Multi-work SQLite model and migration | Done | Schema 6 migration preserves provider graphs/IDs, adds constrained associations and mappings, and 122 tests pass |
 | 2 | Sidecar work rules and exact media overrides | Done | Bounded parser, cached/live verification, digest reconciliation, manual precedence, and 135 tests pass |
 | 3 | Tenrai relation discovery and candidate cache | Done | Depth-3/12-work verified graph, suspicion gate, offline cache, provenance, and 143 tests pass |
-| 4 | Deterministic file-to-work mapping | Pending | MF Ghost and Tsukimichi map without model calls where rules or filenames suffice |
+| 4 | Deterministic file-to-work mapping | Done | Independent filename facts, unique verified boundaries, precedence/invalidation, tie-in coverage, and 151 tests pass |
 | 5 | Structured LLM-assisted mapping | Pending | Unresolved files receive validated, cached candidate mappings within the call budget |
 | 6 | Grouped catalogue rendering | Pending | One player groups seasons and tie-ins while retaining no-JS playback |
 | 7 | Operator controls, observability, and documentation | Pending | Mapping inspection/refresh commands and complete README guidance are available |
@@ -474,7 +474,7 @@ Tsukimichi fixture graphs discover all expected seasons without OpenAI.
 
 ## Step 4 — Deterministic mapping engine
 
-**Status: Pending**
+**Status: Done**
 
 - Represent parsed local media facts independently from display hints:
   season, episode start/end, special kind, explicit ordinal, and basename
@@ -511,6 +511,17 @@ Tsukimichi fixture graphs discover all expected seasons without OpenAI.
 
 **Documentation/commit:** explain deterministic mapping and ambiguity;
 commit as `feat: map local files across related works`.
+
+**Implemented:** filename facts now have a versioned parser independent from
+display hints. The post-candidate mapping pass preserves manual precedence,
+maps uniquely aligned cumulative boundaries and explicit reset seasons,
+validates provider counts/ranges, emits bounded ambiguity/invalid issues, and
+removes stale deterministic rows. Schema 9 stores deterministic parser/mapping
+provenance; its digest includes rules, facts, ordered candidates, relation
+distance, provider identity/counts, and version inputs. The synthetic 12+12+13
+MF Ghost and 12+25 Tsukimichi layouts map without model calls, while duplicate,
+incomplete, renamed, noisy, ranged, special, and changed-count cases exercise
+the conservative failure paths.
 
 ## Step 5 — Structured LLM-assisted mapping
 

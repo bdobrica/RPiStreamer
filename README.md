@@ -297,6 +297,32 @@ makes the scan partial and retains earlier verified candidate associations;
 the model is never used to discover or verify MAL IDs. Relation-derived
 associations record their source and distance from the primary work.
 
+### Deterministic multi-work mapping
+
+The scanner maps files after manual rules and verified related-work discovery.
+Filename facts are parsed independently from the labels shown in the player:
+explicit season, episode or range, special kind, ordinal, and normalized
+basename markers. Supported strong signals include `S02E03`, `Season 2`,
+`2nd Season`, episode ranges, Movie, OVA, OAD, ONA, Special, Summary, and
+Digest. Common release noise such as `1080p`, years, codecs, release-group
+text, and repeated `.mp4` suffixes is not treated as episode evidence.
+
+Continuous numbering is split only when the files form a complete contiguous
+sequence and exactly one ordered prefix of verified candidate episode counts
+matches its endpoint. Thus a 12+12+13 sequel chain can safely map local
+episodes 1–37 to provider episodes 1–12, 1–12, and 1–13. Reset numbering uses
+an explicit season marker and verified sequel order; unmarked files become
+season 1 only when the same folder contains a later explicit season.
+
+Manual exact overrides and work rules always win. Known provider episode
+counts are enforced, ranges may not cross a work boundary, and duplicate,
+incomplete, non-contiguous, or otherwise non-unique layouts remain ambiguous
+or unmapped for later manual/model handling. Ambiguous and invalid decisions
+make the scan partial rather than silently attaching the wrong metadata.
+Deterministic rows store their source, parser/mapping schema, and a digest of
+the filename facts, candidates, provider counts, and sidecar rules. A rename,
+count refresh, or rule edit therefore recomputes only affected results.
+
 The conventional `lost+found` directory is ignored only when it is directly
 under `media_root`, preventing an ext filesystem recovery directory from
 making every scan partial. A nested directory with that name is treated
@@ -874,7 +900,7 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 8 contains:
+Schema version 9 contains:
 
 | Table | Stored data |
 |---|---|
@@ -933,6 +959,10 @@ preserves schema-6 mappings (`recap` becomes `summary`; `other` becomes
 
 Schema 8 records the bounded relation distance for automatically discovered
 candidate associations.
+
+Schema 9 records a parser/mapping schema version on deterministic mappings as
+part of their invalidation provenance. Existing deterministic rows migrate
+with a `legacy` version marker and are safely recomputed on a later scan.
 
 ### Database backup and restore
 

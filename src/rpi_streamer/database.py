@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 8
+LATEST_SCHEMA_VERSION: Final = 9
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -728,6 +728,107 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
         """
         CREATE INDEX library_entry_works_relation_idx
         ON library_entry_works(library_entry_id, source, relation_distance)
+        """,
+    ),
+    9: (
+        """
+        ALTER TABLE media_work_mappings RENAME TO media_work_mappings_v8
+        """,
+        """
+        DROP INDEX media_work_mappings_work_idx
+        """,
+        """
+        CREATE TABLE media_work_mappings (
+            media_file_id INTEGER PRIMARY KEY
+                REFERENCES media_files(id) ON DELETE CASCADE,
+            library_entry_work_id INTEGER NOT NULL
+                REFERENCES library_entry_works(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (
+                kind IN (
+                    'episode', 'movie', 'ova', 'oad', 'ona', 'special',
+                    'summary', 'unknown'
+                )
+            ),
+            episode_start INTEGER CHECK (
+                episode_start IS NULL OR episode_start > 0
+            ),
+            episode_end INTEGER CHECK (
+                episode_end IS NULL OR episode_end > 0
+            ),
+            label TEXT CHECK (label IS NULL OR length(label) > 0),
+            source TEXT NOT NULL CHECK (
+                source IN (
+                    'manual_exact', 'manual_rule', 'deterministic', 'model'
+                )
+            ),
+            confidence REAL CHECK (
+                confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
+            ),
+            model TEXT,
+            schema_version TEXT,
+            input_digest TEXT NOT NULL CHECK (length(input_digest) > 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (
+                (episode_start IS NULL AND episode_end IS NULL)
+                OR
+                (
+                    episode_start IS NOT NULL
+                    AND episode_end IS NOT NULL
+                    AND episode_end >= episode_start
+                )
+            ),
+            CHECK (
+                (
+                    source = 'model'
+                    AND confidence IS NOT NULL
+                    AND model IS NOT NULL AND length(model) > 0
+                    AND schema_version IS NOT NULL
+                    AND length(schema_version) > 0
+                )
+                OR
+                (
+                    source = 'deterministic'
+                    AND confidence IS NULL
+                    AND model IS NULL
+                    AND schema_version IS NOT NULL
+                    AND length(schema_version) > 0
+                )
+                OR
+                (
+                    source IN ('manual_exact', 'manual_rule')
+                    AND model IS NULL
+                    AND schema_version IS NULL
+                )
+            )
+        )
+        """,
+        """
+        INSERT INTO media_work_mappings(
+            media_file_id, library_entry_work_id, kind, episode_start,
+            episode_end, label, source, confidence, model, schema_version,
+            input_digest, created_at, updated_at
+        )
+        SELECT
+            media_file_id, library_entry_work_id, kind, episode_start,
+            episode_end, label, source, confidence, model,
+            CASE
+                WHEN source = 'deterministic'
+                THEN COALESCE(schema_version, 'legacy')
+                ELSE schema_version
+            END,
+            input_digest, created_at, updated_at
+        FROM media_work_mappings_v8
+        """,
+        """
+        DROP TABLE media_work_mappings_v8
+        """,
+        """
+        CREATE INDEX media_work_mappings_work_idx
+        ON media_work_mappings(library_entry_work_id, episode_start, media_file_id)
+        """,
+        """
+        PRAGMA foreign_key_check
         """,
     ),
 }
@@ -1574,6 +1675,32 @@ class CatalogueRepository:
                       ON media.id = mappings.media_file_id
                     WHERE media.library_entry_id = ?
                       AND mappings.source IN ('manual_exact', 'manual_rule')
+                      {retained_clause}
+                )
+                """,
+                (library_entry_id, *sorted(retained_media_file_ids)),
+            )
+
+    def remove_stale_deterministic_mappings(
+        self, library_entry_id: int, retained_media_file_ids: set[int]
+    ) -> None:
+        placeholders = ",".join("?" for _ in retained_media_file_ids)
+        retained_clause = (
+            f"AND mappings.media_file_id NOT IN ({placeholders})"
+            if retained_media_file_ids
+            else ""
+        )
+        with self.transaction():
+            self._connection.execute(
+                f"""
+                DELETE FROM media_work_mappings
+                WHERE media_file_id IN (
+                    SELECT mappings.media_file_id
+                    FROM media_work_mappings AS mappings
+                    JOIN media_files AS media
+                      ON media.id = mappings.media_file_id
+                    WHERE media.library_entry_id = ?
+                      AND mappings.source = 'deterministic'
                       {retained_clause}
                 )
                 """,

@@ -99,5 +99,16 @@ throttling. Relation associations persist source and distance, while partial
 outages preserve the last verified set. No model participates in candidate
 identity discovery.
 
+Schema version 9 and the deterministic mapping layer implement the automatic
+file boundary. Filename facts are parsed separately from presentation hints.
+Cumulative mappings require a complete contiguous sequence whose endpoint
+uniquely matches verified ordered episode counts; reset numbering requires an
+explicit later-season marker. Provider bounds and cross-boundary ranges are
+rejected, while incomplete, duplicate, or non-unique layouts remain unmapped
+or ambiguous. Manual mappings retain precedence. Each deterministic row stores
+a mapping-schema version and an input digest covering filename facts, ordered
+verified candidates/counts, parser version, and canonical sidecar rules, so
+renames and metadata changes invalidate only affected derived rows.
+
 Arbitrary regular expressions, unverified model IDs, unbounded franchise
 graphs, and silent conflict resolution are deliberately excluded.

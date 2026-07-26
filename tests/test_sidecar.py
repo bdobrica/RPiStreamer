@@ -347,7 +347,9 @@ class ManualMappingTestCase(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "success")
-        self.assertIsNone(self.repository.get_media_work_mapping(media.id))
+        replacement = self.repository.get_media_work_mapping(media.id)
+        assert replacement is not None
+        self.assertEqual(replacement.source, "deterministic")
         self.assertIsNotNone(self.repository.get_primary_library_entry_work(entry.id))
 
     def test_malformed_edit_preserves_previous_manual_mapping(self) -> None:

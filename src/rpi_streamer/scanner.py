@@ -13,6 +13,7 @@ from typing import Final
 
 from rpi_streamer.candidates import discover_related_candidates
 from rpi_streamer.database import CatalogueRepository, ProviderRecord, ScanRun
+from rpi_streamer.mapping import map_entry_deterministically, parse_local_media_facts
 from rpi_streamer.sidecar import (
     MediaOverride,
     Sidecar,
@@ -314,11 +315,15 @@ def scan_library(
             timestamp,
             verify_work=verify_work,
         )
+        deterministic_errors = _reconcile_deterministic_mappings(
+            repository, discovery.titles, timestamp
+        )
         issues = (
             *discovery.issues,
             *(ScanIssue("metadata", error) for error in metadata_errors),
             *(ScanIssue("mapping", error) for error in mapping_errors),
             *(ScanIssue("candidates", error) for error in candidate_errors),
+            *(ScanIssue("mapping", error) for error in deterministic_errors),
         )
         status = "partial" if issues else "success"
         summary = _summary(issues)
@@ -594,6 +599,33 @@ def _discover_relation_candidates(
     return tuple(errors)
 
 
+def _reconcile_deterministic_mappings(
+    repository: CatalogueRepository,
+    titles: Sequence[DiscoveredTitle],
+    timestamp: datetime,
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    for title in titles:
+        if not title.sidecar_valid:
+            continue
+        entry = repository.get_library_entry(title.relative_path)
+        if entry is None:
+            continue
+        result = map_entry_deterministically(
+            repository,
+            entry.id,
+            mapped_at=timestamp,
+            rules_digest=title.sidecar.digest,
+        )
+        for decision in result.decisions:
+            if decision.outcome in {"ambiguous", "invalid"}:
+                errors.append(
+                    f"{title.relative_path}: {decision.filename}: "
+                    f"{decision.outcome}: {decision.reason}"
+                )
+    return tuple(errors)
+
+
 def _exceeds_provider_episode_count(
     record: ProviderRecord, kind: str, episode_end: int | None
 ) -> bool:
@@ -702,27 +734,11 @@ def _mapping_digest(*parts: str) -> str:
 
 
 def _manual_facts(filename: str) -> tuple[int | None, int | None, int | None]:
-    stem = Path(filename).stem
-    season: int | None = None
-    episode_start: int | None = None
-    episode_end: int | None = None
-    match = _SEASON_EPISODE_RE.search(stem)
-    if match:
-        season = int(match.group(1))
-        episode_start = int(match.group(2))
-        episode_end = episode_start if match.group(3) is None else int(match.group(3))
-        return season, episode_start, episode_end
-    season_match = _ORDINAL_SEASON_RE.search(stem)
-    if season_match:
-        season = int(season_match.group(1))
-    matches = list(_ANY_EPISODE_RE.finditer(stem))
-    if matches:
-        match = matches[-1]
-        episode_start = int(match.group(1))
-        episode_end = episode_start if match.group(2) is None else int(match.group(2))
-    if season is None and episode_start is not None:
+    facts = parse_local_media_facts(filename)
+    season = facts.season
+    if season is None and facts.episode_start is not None:
         season = 1
-    return season, episode_start, episode_end
+    return season, facts.episode_start, facts.episode_end
 
 
 def _read_sidecar(path: Path, root: Path) -> tuple[Sidecar, ScanIssue | None]:
