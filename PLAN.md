@@ -22,7 +22,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | 3 | Tenrai relation discovery and candidate cache | Done | Depth-3/12-work verified graph, suspicion gate, offline cache, provenance, and 143 tests pass |
 | 4 | Deterministic file-to-work mapping | Done | Independent filename facts, unique verified boundaries, precedence/invalidation, tie-in coverage, and 151 tests pass |
 | 5 | Structured LLM-assisted mapping | Done | Separate strict schema, verified-ID enum, validation/precedence, stable cache/cooldown, shared budget, and 158 tests pass |
-| 6 | Grouped catalogue rendering | Pending | One player groups seasons and tie-ins while retaining no-JS playback |
+| 6 | Grouped catalogue rendering | Done | Native work groups, one cross-group player, work cards/context, unmapped and no-JS playback, and 160 tests pass |
 | 7 | Operator controls, observability, and documentation | Pending | Mapping inspection/refresh commands and complete README guidance are available |
 | 8 | End-to-end and Raspberry Pi acceptance | Pending | Upgrade, cold/cached scans, manual correction, playback, and resource evidence pass |
 
@@ -599,7 +599,7 @@ ambiguous tie-ins, and zero-call deterministic behavior.
 
 ## Step 6 — Grouped static catalogue
 
-**Status: Pending**
+**Status: Done**
 
 - Keep one HTML5 player and the existing previous/next/select behavior.
 - Render `<optgroup>` groups for each associated work, ordered by manual order,
@@ -634,6 +634,17 @@ ambiguous tie-ins, and zero-call deterministic behavior.
 
 **Documentation/commit:** add grouped-page examples and accessibility notes;
 commit as `feat: group collection media by metadata work`.
+
+**Implemented:** The static renderer now orders associated works by persisted
+manual/relation order and stable provider identity, renders mapped media in
+native `<optgroup>` elements, and retains uncertain files in a final
+`Unmapped` group. One player shows the selected work and cached provider
+episode title; its flat option sequence lets Previous/Next and `#episode-N`
+navigation cross work boundaries. Associated-work cards include cached cover,
+type, episode count, relation, and association provenance. Provider episode
+tables render per work, and grouped no-JavaScript links retain direct access to
+every encoded media URL. DOM fixtures cover grouping, metadata, escaping,
+unmapped playback, one-player behavior, and cross-group controller semantics.
 
 ## Step 7 — Operator controls, observability, and documentation
 

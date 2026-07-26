@@ -37,6 +37,12 @@ h1, h2 { line-height: 1.15; }
 .episode-controls select, .episode-controls button { min-height: 2.75rem; padding: .5rem .75rem; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: .4rem; }
 .episode-controls button:disabled { opacity: .45; }
 .episode-links { columns: 2 16rem; }
+.episode-links > li { break-inside: avoid; margin-bottom: 1rem; }
+.episode-links ul { padding-left: 1.25rem; }
+.work-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: 1rem; }
+.work-card { display: flex; gap: 1rem; padding: .75rem; background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; }
+.work-card .cover, .work-card .placeholder { width: 5rem; flex: none; }
+.work-card h3, .work-card p { margin-block: 0 .5rem; }
 video { display: block; width: 100%; max-height: 70vh; background: #000; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: .5rem; border-bottom: 1px solid var(--line); text-align: left; }

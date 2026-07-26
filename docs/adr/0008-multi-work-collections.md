@@ -112,3 +112,14 @@ renames and metadata changes invalidate only affected derived rows.
 
 Arbitrary regular expressions, unverified model IDs, unbounded franchise
 graphs, and silent conflict resolution are deliberately excluded.
+
+The grouped renderer implements the presentation boundary without changing
+collection slugs or media URLs. Associated works are ordered by their persisted
+manual/relation display order, then stable provider identity. One native
+`<select>` contains a work `<optgroup>` for each mapped set and a final
+`Unmapped` group. Its flat option order drives Previous/Next navigation across
+boundaries and preserves the existing `#episode-N` deep links. The selected
+work and cached provider episode title are updated next to the sole video
+player. Direct, grouped `<noscript>` links keep every file playable without
+JavaScript, while compact cards and per-work episode tables expose the
+additional cached metadata.

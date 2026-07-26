@@ -1655,6 +1655,21 @@ class CatalogueRepository:
         ).fetchone()
         return None if row is None else _media_work_mapping(row)
 
+    def list_media_work_mappings(self, library_entry_id: int) -> list[MediaWorkMapping]:
+        """Return available media mappings for one collection in file order."""
+
+        rows = self._connection.execute(
+            """
+            SELECT mappings.*
+            FROM media_work_mappings AS mappings
+            JOIN media_files AS media ON media.id = mappings.media_file_id
+            WHERE media.library_entry_id = ? AND media.available = 1
+            ORDER BY media.relative_path, media.id
+            """,
+            (library_entry_id,),
+        ).fetchall()
+        return [_media_work_mapping(row) for row in rows]
+
     def remove_media_work_mapping(self, media_file_id: int, *, source: str) -> bool:
         """Remove one mapping only if its current provenance matches."""
 

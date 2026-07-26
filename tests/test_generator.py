@@ -280,6 +280,139 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("<noscript>", page)
         self.assertRegex(page, r"assets/episode-player-[0-9a-f]{16}\.js")
 
+    def test_multi_work_collection_groups_media_and_context(self) -> None:
+        entry_id = self._entry("MF Ghost", "MF Ghost", filename="S01E01.mp4")
+        primary_record_id = self._metadata(
+            entry_id, provider_id="50695", title="MF Ghost"
+        )
+        entry = self.repository.get_library_entry_by_id(entry_id)
+        assert entry is not None
+        primary_work = self.repository.get_primary_library_entry_work(entry_id)
+        assert primary_work is not None
+        season_two_record = self.repository.upsert_detached_provider_record(
+            provider="jikan",
+            provider_id="57559",
+            canonical_title="MF Ghost 2nd Season",
+            synopsis="The second season.",
+            episode_count=12,
+            raw_data={"mal_id": 57559, "type": "TV"},
+            fetched_at=NOW,
+        )
+        self.repository.replace_provider_episodes(
+            season_two_record.id,
+            [ProviderEpisode(1, "The White Reaper", NOW, False, False)],
+        )
+        season_two = self.repository.associate_library_entry_work(
+            library_entry_id=entry_id,
+            provider_record_id=season_two_record.id,
+            local_name="season-2",
+            source="relation",
+            verified_at=NOW,
+            label="Season 2",
+            display_order=1100,
+            confidence=0.96,
+            relation_distance=1,
+        )
+        self.repository.replace_relations(
+            primary_record_id,
+            [Relation("sequel", "jikan", "57559", "MF Ghost 2nd Season")],
+        )
+        season_two_file = self.repository.upsert_media_file(
+            library_entry_id=entry_id,
+            relative_path="MF Ghost/S02E01 & start.mp4",
+            size_bytes=5,
+            mtime_ns=11,
+            local_identity="1:s2",
+            seen_at=NOW,
+        )
+        unmapped = self.repository.upsert_media_file(
+            library_entry_id=entry_id,
+            relative_path="MF Ghost/Bonus <unknown>.mp4",
+            size_bytes=5,
+            mtime_ns=12,
+            local_identity="1:bonus",
+            seen_at=NOW,
+        )
+        season_one_file = next(
+            media
+            for media in self.repository.list_media_files(entry_id)
+            if media.filename == "S01E01.mp4"
+        )
+        self.repository.set_media_work_mapping(
+            media_file_id=season_one_file.id,
+            library_entry_work_id=primary_work.id,
+            kind="episode",
+            episode_start=1,
+            episode_end=1,
+            source="deterministic",
+            schema_version="test",
+            input_digest="s1",
+            mapped_at=NOW,
+        )
+        self.repository.set_media_work_mapping(
+            media_file_id=season_two_file.id,
+            library_entry_work_id=season_two.id,
+            kind="episode",
+            episode_start=1,
+            episode_end=1,
+            source="model",
+            confidence=0.91,
+            model="gpt-5.6-luna",
+            schema_version="test",
+            input_digest="s2",
+            mapped_at=NOW,
+        )
+
+        generate_site(self.repository, site_dir=self.site, state_dir=self.state)
+
+        page = (self.site / "titles" / f"{title_slug(entry)}.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(page.count("<video "), 1)
+        self.assertEqual(page.count("<optgroup "), 3)
+        self.assertLess(
+            page.index('<optgroup label="MF Ghost">'),
+            page.index('<optgroup label="MF Ghost 2nd Season">'),
+        )
+        self.assertLess(
+            page.index('<optgroup label="MF Ghost 2nd Season">'),
+            page.index('<optgroup label="Unmapped">'),
+        )
+        self.assertIn("Episode 1 — S01E01.mp4", page)
+        self.assertIn("Episode 1 — S02E01 &amp; start.mp4", page)
+        self.assertIn("Bonus &lt;unknown&gt;.mp4", page)
+        self.assertIn("data-work-heading", page)
+        self.assertIn('data-episode-title="The White Reaper"', page)
+        self.assertIn("Works in this collection", page)
+        self.assertIn("Season 2", page)
+        self.assertIn("Relation (96%)", page)
+        self.assertIn("<h3>MF Ghost 2nd Season</h3>", page)
+        self.assertIn("The White Reaper", page)
+        self.assertIn(
+            "/media/MF%20Ghost/S02E01%20%26%20start.mp4",
+            page,
+        )
+        self.assertIn("<noscript>", page)
+        self.assertIn(
+            "/media/MF%20Ghost/Bonus%20%3Cunknown%3E.mp4",
+            page,
+        )
+        self.assertIsNotNone(unmapped)
+
+    def test_episode_script_navigates_flat_options_across_groups(self) -> None:
+        script = (
+            Path(__file__).parents[1]
+            / "src"
+            / "rpi_streamer"
+            / "static"
+            / "episode-player.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Array.from(selector.options)", script)
+        self.assertIn("selector.selectedIndex - 1", script)
+        self.assertIn("selector.selectedIndex + 1", script)
+        self.assertIn("#episode-", script)
+
 
 class UrlAndSlugTests(unittest.TestCase):
     def test_media_url_encodes_special_and_unicode_characters(self) -> None:

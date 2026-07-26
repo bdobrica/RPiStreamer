@@ -377,14 +377,21 @@ or request-time Python process:
 - genre pages and links between known prequels and sequels;
 - semantic breadcrumbs and primary navigation;
 - one HTML5 `<video controls preload="metadata">` player per title page;
-- Previous/Next buttons and an episode dropdown that change its source without
-  autoplaying;
+- Previous/Next buttons and a work-grouped episode dropdown that change its
+  source without autoplaying, including across season and tie-in boundaries;
+- compact cards for associated works and provider episode context per work;
+- an explicit `Unmapped` group that keeps uncertain files visible and
+  playable;
 - graceful placeholders when metadata or artwork is unavailable.
 
 The first local episode remains playable without JavaScript, and a `<noscript>`
-list links to every other local episode. A fragment such as `#episode-3`
-selects an episode when JavaScript is available. Provider episode rows
-are shown in a separate reference table and never imply local availability.
+list groups direct links to every other local episode. Native `<optgroup>`
+labels expose work boundaries to assistive technology and keyboard users
+without introducing custom controls. A fragment such as `#episode-3` selects
+an episode when JavaScript is available; its flat position can cross a group
+boundary. The selected work and provider episode title are shown beside the
+player. Provider episode rows are shown in per-work reference tables and never
+imply local availability.
 All user-controlled filenames and remote text are HTML-escaped. Every media
 path segment is URL-encoded and rooted below `/media/`; remote artwork URLs are
 never emitted into pages.

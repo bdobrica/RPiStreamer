@@ -6,8 +6,10 @@
   const previous = document.querySelector("[data-episode-previous]");
   const next = document.querySelector("[data-episode-next]");
   const heading = document.querySelector("[data-episode-heading]");
+  const workHeading = document.querySelector("[data-work-heading]");
+  const providerTitle = document.querySelector("[data-provider-episode-title]");
   const status = document.querySelector("[data-episode-status]");
-  if (!player || !selector || !previous || !next || !heading || !status) return;
+  if (!player || !selector || !previous || !next || !heading || !workHeading || !providerTitle || !status) return;
 
   const options = Array.from(selector.options);
 
@@ -18,8 +20,12 @@
     player.src = option.value;
     player.load();
     selector.selectedIndex = index;
-    heading.textContent = option.textContent;
-    status.textContent = `Selected ${option.textContent}`;
+    const filename = option.textContent.split(" — ").slice(1).join(" — ");
+    const episodeLabel = option.textContent.split(" — ")[0];
+    heading.textContent = episodeLabel;
+    workHeading.textContent = option.dataset.workTitle || "Unmapped";
+    providerTitle.textContent = option.dataset.episodeTitle || "";
+    status.textContent = `Selected ${episodeLabel}${filename ? ` — ${filename}` : ""}`;
     previous.disabled = index === 0;
     next.disabled = index === options.length - 1;
     if (updateFragment) history.replaceState(null, "", `#episode-${index + 1}`);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import os
 import shutil
 import tempfile
@@ -19,7 +20,9 @@ from rpi_streamer.database import (
     Artwork,
     CatalogueRepository,
     LibraryEntry,
+    LibraryEntryWork,
     MediaFile,
+    MediaWorkMapping,
     ProviderRecord,
     ScanRun,
 )
@@ -48,6 +51,14 @@ class TitleView:
     record: ProviderRecord | None
     genres: tuple[str, ...]
     cover_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkView:
+    work: LibraryEntryWork
+    record: ProviderRecord
+    cover_name: str | None
+    relation: str | None
 
 
 def title_slug(entry: LibraryEntry) -> str:
@@ -169,6 +180,7 @@ def _render(
             scan_status,
             style_name,
             episode_script_name,
+            state_dir,
         )
 
     sorted_genres = sorted(genre_members, key=str.casefold)
@@ -236,10 +248,18 @@ def _render_title(
     scan_status: str,
     style_name: str,
     episode_script_name: str,
+    state_dir: Path,
 ) -> None:
     entry, record = view.entry, view.record
     local_files = repository.list_media_files(entry.id)
-    local_episodes = _local_episode_player(local_files)
+    works = _work_views(
+        repository, entry.id, record, state_dir, destination.parent.parent
+    )
+    mappings = {
+        mapping.media_file_id: mapping
+        for mapping in repository.list_media_work_mappings(entry.id)
+    }
+    local_episodes = _local_episode_player(local_files, works, mappings, repository)
 
     genres = (
         '<ul class="tag-list" aria-label="Genres">'
@@ -252,25 +272,10 @@ def _render_title(
         if view.genres
         else ""
     )
-    provider_episodes = ""
+    provider_episodes = _provider_episode_context(repository, works)
+    work_cards = _work_cards(works)
     relations = ""
     if record is not None:
-        episodes = repository.list_provider_episodes(record.id)
-        if episodes:
-            rows = "".join(
-                "<tr>"
-                f"<td>{episode.episode_number}</td>"
-                f"<td>{_text(episode.title or 'Untitled')}</td>"
-                f"<td>{_text(_episode_note(episode.filler, episode.recap))}</td>"
-                "</tr>"
-                for episode in episodes
-            )
-            provider_episodes = (
-                "<section><h2>Provider episode context</h2>"
-                '<p class="muted">Reference information only; availability is '
-                "shown above.</p><table><thead><tr><th>Episode</th><th>Title</th>"
-                f"<th>Notes</th></tr></thead><tbody>{rows}</tbody></table></section>"
-            )
         relation_rows = []
         for relation in repository.list_relations(record.id):
             target = by_provider_id.get(
@@ -310,6 +315,7 @@ def _render_title(
             else "No synopsis is available."
         ),
         local_episodes=local_episodes,
+        work_cards=work_cards,
         provider_episodes=provider_episodes,
         relations=relations,
         episode_script=(
@@ -351,31 +357,150 @@ def _copy_cover(
     return name
 
 
-def _local_episode_player(local_files: Sequence[MediaFile]) -> str:
+def _work_views(
+    repository: CatalogueRepository,
+    entry_id: int,
+    primary_record: ProviderRecord | None,
+    state_dir: Path,
+    output: Path,
+) -> tuple[WorkView, ...]:
+    primary_relations = (
+        {}
+        if primary_record is None
+        else {
+            (
+                relation.target_provider,
+                relation.target_provider_id,
+            ): relation.relation_type
+            for relation in repository.list_relations(primary_record.id)
+        }
+    )
+    views = []
+    for work in repository.list_library_entry_works(entry_id):
+        record = repository.get_provider_record_for_work(work.id)
+        if record is None:
+            continue
+        relation = (
+            "Primary"
+            if work.is_primary
+            else primary_relations.get((record.provider, record.provider_id))
+        )
+        views.append(
+            WorkView(
+                work,
+                record,
+                _copy_cover(repository, record, state_dir, output),
+                relation,
+            )
+        )
+    return tuple(
+        sorted(
+            views,
+            key=lambda item: (
+                item.work.display_order,
+                item.work.relation_distance or 0,
+                item.record.canonical_title.casefold(),
+                (
+                    f"{int(item.record.provider_id):020d}"
+                    if item.record.provider_id.isdigit()
+                    else item.record.provider_id
+                ),
+            ),
+        )
+    )
+
+
+def _local_episode_player(
+    local_files: Sequence[MediaFile],
+    works: Sequence[WorkView],
+    mappings: dict[int, MediaWorkMapping],
+    repository: CatalogueRepository,
+) -> str:
     if not local_files:
         return '<p class="muted">No playable local files are currently available.</p>'
-    first = local_files[0]
-    first_name = _episode_label(first)
+    work_by_id = {view.work.id: view for view in works}
+    episode_titles = {
+        view.work.id: {
+            episode.episode_number: episode.title
+            for episode in repository.list_provider_episodes(view.record.id)
+        }
+        for view in works
+    }
+    grouped: dict[int | None, list[MediaFile]] = {view.work.id: [] for view in works}
+    for media in local_files:
+        mapping = mappings.get(media.id)
+        group_id = (
+            mapping.library_entry_work_id
+            if mapping is not None and mapping.library_entry_work_id in work_by_id
+            else None
+        )
+        grouped.setdefault(group_id, []).append(media)
+    ordered = [
+        media for view in works for media in grouped.get(view.work.id, ())
+    ] + grouped.get(None, [])
+    first = ordered[0]
+    first_mapping = mappings.get(first.id)
+    first_work = (
+        work_by_id.get(first_mapping.library_entry_work_id)
+        if first_mapping is not None
+        else None
+    )
+    first_name = _mapped_episode_label(first, first_mapping)
+    first_work_title = first_work.record.canonical_title if first_work else "Unmapped"
+    first_provider_title = _mapped_provider_title(
+        first_mapping, episode_titles.get(first_work.work.id, {}) if first_work else {}
+    )
     first_url = media_url(first.relative_path)
-    options = "".join(
-        f'<option value="{_attr(media_url(media.relative_path))}">'
-        f"{_text(_episode_label(media))}</option>"
-        for media in local_files
-    )
-    fallback_links = "".join(
-        f'<li><a href="{_attr(media_url(media.relative_path))}">'
-        f"{_text(_episode_label(media))}</a></li>"
-        for media in local_files
-    )
+    option_groups = []
+    fallback_groups = []
+    for group_id in [view.work.id for view in works] + [None]:
+        media_group = grouped.get(group_id, [])
+        if not media_group:
+            continue
+        work_view = work_by_id.get(group_id) if group_id is not None else None
+        group_label = work_view.record.canonical_title if work_view else "Unmapped"
+        options = []
+        links = []
+        for media in media_group:
+            mapping = mappings.get(media.id)
+            label = _mapped_episode_label(media, mapping)
+            provider_title = _mapped_provider_title(
+                mapping,
+                episode_titles.get(group_id, {}) if group_id is not None else {},
+            )
+            url = media_url(media.relative_path)
+            visible_label = (
+                media.filename if mapping is None else f"{label} — {media.filename}"
+            )
+            options.append(
+                f'<option value="{_attr(url)}" '
+                f'data-work-title="{_attr(group_label)}" '
+                f'data-episode-title="{_attr(provider_title or "")}">'
+                f"{_text(visible_label)}</option>"
+            )
+            context = f" — {provider_title}" if provider_title else ""
+            links.append(
+                f'<li><a href="{_attr(url)}">{_text(visible_label)}</a>'
+                f"{_text(context)}</li>"
+            )
+        option_groups.append(
+            f'<optgroup label="{_attr(group_label)}">{"".join(options)}</optgroup>'
+        )
+        fallback_groups.append(
+            f"<li><strong>{_text(group_label)}</strong><ul>{''.join(links)}</ul></li>"
+        )
     disabled = " disabled" if len(local_files) == 1 else ""
     return (
         '<article class="episode">'
         '<div class="episode-controls">'
         '<button type="button" data-episode-previous disabled>Previous</button>'
         '<label for="episode-select">Episode'
-        f'<select id="episode-select" data-episode-select>{options}</select></label>'
+        f'<select id="episode-select" data-episode-select>'
+        f"{''.join(option_groups)}</select></label>"
         f'<button type="button" data-episode-next{disabled}>Next</button></div>'
+        f'<p class="eyebrow" data-work-heading>{_text(first_work_title)}</p>'
         f"<h3 data-episode-heading>{_text(first_name)}</h3>"
+        f"<p data-provider-episode-title>{_text(first_provider_title or '')}</p>"
         '<p class="muted" data-episode-status aria-live="polite">'
         f"Selected {_text(first_name)}</p>"
         f'<video controls preload="metadata" src="{_attr(first_url)}" '
@@ -384,15 +509,116 @@ def _local_episode_player(local_files: Sequence[MediaFile]) -> str:
         f'<a href="{_attr(first_url)}">Download the file</a>.'
         "</p></video>"
         "<noscript><p>JavaScript is disabled. Choose an episode:</p>"
-        f'<ul class="episode-links">{fallback_links}</ul></noscript></article>'
+        f'<ul class="episode-links">{"".join(fallback_groups)}</ul>'
+        "</noscript></article>"
     )
 
 
-def _episode_label(media: MediaFile) -> str:
+def _mapped_episode_label(media: MediaFile, mapping: MediaWorkMapping | None) -> str:
+    if mapping is not None:
+        if mapping.label:
+            return mapping.label
+        start, end = mapping.episode_start, mapping.episode_end
+        kind = mapping.kind.casefold()
+        prefix = {
+            "episode": "Episode",
+            "ova": "OVA",
+            "oad": "OAD",
+            "ona": "ONA",
+            "special": "Special",
+            "movie": "Movie",
+            "summary": "Summary",
+        }.get(kind, kind.replace("_", " ").title())
+        if start is not None:
+            number = str(start) if end in {None, start} else f"{start}–{end}"
+            return f"{prefix} {number}"
+        return prefix
     hint = media.episode_hint
     if hint is None and (media.inference_confidence or 0) >= 0.8:
         hint = media.inferred_episode_hint
-    return media.filename if hint is None else f"{hint} · {media.filename}"
+    return media.filename if hint is None else hint
+
+
+def _mapped_provider_title(
+    mapping: MediaWorkMapping | None, titles: dict[int, str | None]
+) -> str | None:
+    if mapping is None or mapping.episode_start is None:
+        return None
+    if mapping.episode_end not in {None, mapping.episode_start}:
+        return None
+    return titles.get(mapping.episode_start)
+
+
+def _work_cards(works: Sequence[WorkView]) -> str:
+    secondary = [view for view in works if not view.work.is_primary]
+    if not secondary:
+        return ""
+    cards = []
+    for view in secondary:
+        raw = json.loads(view.record.raw_json)
+        media_type = raw.get("type") if isinstance(raw, dict) else None
+        cover = (
+            f'<img class="cover" src="../assets/covers/{_attr(view.cover_name)}" '
+            f'alt="Cover art for {_attr(view.record.canonical_title)}">'
+            if view.cover_name
+            else '<div class="placeholder" aria-label="No cover art">No cover</div>'
+        )
+        details = [
+            str(media_type) if media_type else "Unknown type",
+            (
+                _count_label(view.record.episode_count, "episode")
+                if view.record.episode_count is not None
+                else "Unknown episode count"
+            ),
+            (view.relation or view.work.source).replace("_", " ").title(),
+            _mapping_provenance(view.work),
+        ]
+        cards.append(
+            f'<article class="work-card">{cover}<div><h3>'
+            f"{_text(view.work.label or view.record.canonical_title)}</h3>"
+            f'<p class="muted">{_text(" · ".join(details))}</p></div></article>'
+        )
+    return (
+        "<section><h2>Works in this collection</h2>"
+        f'<div class="work-grid">{"".join(cards)}</div></section>'
+    )
+
+
+def _mapping_provenance(work: LibraryEntryWork) -> str:
+    label = work.source.replace("_", " ").title()
+    if work.confidence is not None:
+        label += f" ({work.confidence:.0%})"
+    return label
+
+
+def _provider_episode_context(
+    repository: CatalogueRepository, works: Sequence[WorkView]
+) -> str:
+    sections = []
+    for view in works:
+        episodes = repository.list_provider_episodes(view.record.id)
+        if not episodes:
+            continue
+        rows = "".join(
+            "<tr>"
+            f"<td>{episode.episode_number}</td>"
+            f"<td>{_text(episode.title or 'Untitled')}</td>"
+            f"<td>{_text(_episode_note(episode.filler, episode.recap))}</td>"
+            "</tr>"
+            for episode in episodes
+        )
+        sections.append(
+            f"<section><h3>{_text(view.record.canonical_title)}</h3>"
+            "<table><thead><tr><th>Episode</th><th>Title</th><th>Notes</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table></section>"
+        )
+    if not sections:
+        return ""
+    return (
+        "<section><h2>Provider episode context</h2>"
+        '<p class="muted">Reference information only; availability is shown above.'
+        f"</p>{''.join(sections)}</section>"
+    )
 
 
 def _validated_artwork_source(artwork: Artwork, state_dir: Path) -> Path | None:
