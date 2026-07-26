@@ -262,6 +262,23 @@ def map_entry_deterministically(
     return DeterministicMappingResult(tuple(final))
 
 
+def preview_entry_deterministically(
+    repository: CatalogueRepository,
+    library_entry_id: int,
+) -> DeterministicMappingResult:
+    """Explain deterministic outcomes without changing mappings or caches."""
+
+    media = repository.list_media_files(library_entry_id)
+    facts_by_id = {item.id: parse_local_media_facts(item.filename) for item in media}
+    works = _ordered_works(repository, library_entry_id)
+    records = {
+        work.id: repository.get_provider_record_for_work(work.id) for work in works
+    }
+    return DeterministicMappingResult(
+        tuple(_decide(media, facts_by_id, works, records))
+    )
+
+
 def map_entry_with_model(
     repository: CatalogueRepository,
     library_entry_id: int,

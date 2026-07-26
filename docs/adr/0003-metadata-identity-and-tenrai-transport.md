@@ -29,3 +29,8 @@ New native and container configurations use Tenrai without duplicating cached
 catalogue data. Existing INI files remain operator-owned and must be changed
 explicitly during upgrade. A future provider with a different schema or
 identity namespace requires a new ADR and migration strategy.
+
+Candidate refresh is a bounded, per-collection relation-graph operation. It
+reuses normalized records and may verify only missing relation targets through
+the configured transport. It does not purge shared provider metadata or turn
+an ordinary SIGHUP into an unconditional provider refresh.

@@ -27,3 +27,9 @@ authoritative even when provider episode information exists.
 Some titles require an explicit pin, but incorrect automatic matches are less
 likely. Matching remains deterministic, testable offline, and explainable to
 an operator.
+
+The mapping inspection command extends explainability to collection works and
+files: it reports bounded candidate provenance and deterministic outcome
+reasons without changing state. Operators discover and verify numeric MAL IDs
+outside the service, dry-run sidecars locally, and retain last-known-good
+mappings when a declared ID cannot yet be verified.

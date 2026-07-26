@@ -1683,6 +1683,46 @@ class CatalogueRepository:
             )
         return cursor.rowcount > 0
 
+    def invalidate_model_mappings(self, library_entry_id: int) -> tuple[int, int]:
+        """Delete one collection's model mappings and their exact cache rows."""
+
+        rows = self._connection.execute(
+            """
+            SELECT DISTINCT mappings.input_digest
+            FROM media_work_mappings AS mappings
+            JOIN media_files AS media ON media.id = mappings.media_file_id
+            WHERE media.library_entry_id = ? AND mappings.source = 'model'
+            """,
+            (library_entry_id,),
+        ).fetchall()
+        digests = [str(row["input_digest"]) for row in rows]
+        with self.transaction():
+            mapping_cursor = self._connection.execute(
+                """
+                DELETE FROM media_work_mappings
+                WHERE source = 'model' AND media_file_id IN (
+                    SELECT id FROM media_files WHERE library_entry_id = ?
+                )
+                """,
+                (library_entry_id,),
+            )
+            cache_count = 0
+            for digest in digests:
+                referenced = self._connection.execute(
+                    """
+                    SELECT 1 FROM media_work_mappings
+                    WHERE source = 'model' AND input_digest = ?
+                    LIMIT 1
+                    """,
+                    (digest,),
+                ).fetchone()
+                if referenced is None:
+                    cache_count += self._connection.execute(
+                        "DELETE FROM inference_cache WHERE cache_key = ?",
+                        (digest,),
+                    ).rowcount
+        return mapping_cursor.rowcount, cache_count
+
     def remove_stale_manual_mappings(
         self, library_entry_id: int, retained_media_file_ids: set[int]
     ) -> None:

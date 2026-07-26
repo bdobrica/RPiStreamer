@@ -3,18 +3,37 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
+from rpi_streamer.candidates import WorkVerifier
 from rpi_streamer.config import (
     ConfigurationError,
+    Settings,
     configure_logging,
     load_settings,
 )
+from rpi_streamer.database import CatalogueRepository, DatabaseError, ProviderRecord
+from rpi_streamer.metadata import (
+    JikanProvider,
+    ProviderError,
+    TenraiProvider,
+    verify_provider_work,
+)
 from rpi_streamer.nginx import render_nginx, write_nginx
+from rpi_streamer.operator import (
+    CollectionNotFoundError,
+    inspect_collection,
+    invalidate_model,
+    recompute_deterministic,
+    refresh_candidates,
+    validate_collection_sidecar,
+)
 from rpi_streamer.service import AlreadyRunningError, InstanceLock, Service, run_once
 
 EXIT_OK = 0
@@ -60,6 +79,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     nginx_parser.add_argument("--listen", default="127.0.0.1:8080")
     nginx_parser.add_argument("--output", type=Path, required=True)
+    mapping_parser = subparsers.add_parser(
+        "mapping",
+        help="inspect or control one collection's multi-work mappings",
+    )
+    mapping_subparsers = mapping_parser.add_subparsers(
+        dest="mapping_command", required=True
+    )
+    for command, help_text in (
+        ("inspect", "print bounded mapping diagnostics"),
+        ("validate-sidecar", "dry-run the collection sidecar"),
+        ("refresh-candidates", "refresh the bounded relation candidates"),
+        ("invalidate-model", "remove only model mappings and exact caches"),
+        ("recompute", "recompute deterministic mappings"),
+    ):
+        command_parser = mapping_subparsers.add_parser(command, help=help_text)
+        command_parser.add_argument(
+            "collection", help="exact collection path relative to media_root"
+        )
     return parser
 
 
@@ -86,6 +123,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"rpi-streamer: cannot render Nginx config: {error}", file=sys.stderr)
             return EXIT_USAGE
         return EXIT_OK
+    if args.command == "mapping":
+        return _mapping_command(settings, args.mapping_command, args.collection)
     if args.command == "scan":
         try:
             with InstanceLock(settings.state_dir):
@@ -116,6 +155,79 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_UNAVAILABLE
 
     return EXIT_USAGE
+
+
+def _mapping_command(settings: Settings, command: str, collection: str) -> int:
+    """Run one bounded collection mapping operation."""
+
+    database_path = settings.database_path
+    media_root = settings.media_root
+    try:
+        lock = (
+            InstanceLock(settings.state_dir)
+            if command in {"refresh-candidates", "invalidate-model", "recompute"}
+            else contextlib.nullcontext()
+        )
+        with lock, CatalogueRepository(database_path) as repository:
+            if command == "inspect":
+                payload = inspect_collection(repository, media_root, collection)
+            elif command == "validate-sidecar":
+                payload = validate_collection_sidecar(
+                    repository, media_root, collection
+                )
+            elif command == "invalidate-model":
+                payload = invalidate_model(repository, collection)
+            elif command == "recompute":
+                payload = recompute_deterministic(repository, collection)
+            else:
+                payload = refresh_candidates(
+                    repository,
+                    collection,
+                    verify_work=_work_verifier(settings),
+                )
+    except CollectionNotFoundError as error:
+        print(f"rpi-streamer: {error}", file=sys.stderr)
+        return EXIT_UNAVAILABLE
+    except ValueError as error:
+        print(f"rpi-streamer: invalid sidecar: {error}", file=sys.stderr)
+        return EXIT_USAGE
+    except AlreadyRunningError as error:
+        print(f"rpi-streamer: {error}", file=sys.stderr)
+        return EXIT_LOCKED
+    except (OSError, DatabaseError, ProviderError) as error:
+        print(f"rpi-streamer: mapping operation failed: {error}", file=sys.stderr)
+        return EXIT_UNAVAILABLE
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return EXIT_OK
+
+
+def _work_verifier(settings: Settings) -> WorkVerifier | None:
+    if settings.metadata_provider not in {"jikan", "tenrai"}:
+        return None
+    provider = (
+        TenraiProvider() if settings.metadata_provider == "tenrai" else JikanProvider()
+    )
+
+    def verify(
+        repository: CatalogueRepository,
+        provider_id: str,
+        verified_at: datetime,
+    ) -> tuple[ProviderRecord | None, str | None]:
+        try:
+            return (
+                verify_provider_work(
+                    repository,
+                    provider,
+                    provider_id,
+                    metadata_language=settings.metadata_language,
+                    now=verified_at,
+                ),
+                None,
+            )
+        except (ProviderError, ValueError, OSError) as error:
+            return None, str(error)
+
+    return verify
 
 
 def _healthcheck(path: Path) -> int:

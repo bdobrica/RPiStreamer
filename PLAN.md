@@ -23,7 +23,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | 4 | Deterministic file-to-work mapping | Done | Independent filename facts, unique verified boundaries, precedence/invalidation, tie-in coverage, and 151 tests pass |
 | 5 | Structured LLM-assisted mapping | Done | Separate strict schema, verified-ID enum, validation/precedence, stable cache/cooldown, shared budget, and 158 tests pass |
 | 6 | Grouped catalogue rendering | Done | Native work groups, one cross-group player, work cards/context, unmapped and no-JS playback, and 160 tests pass |
-| 7 | Operator controls, observability, and documentation | Pending | Mapping inspection/refresh commands and complete README guidance are available |
+| 7 | Operator controls, observability, and documentation | Done | Five bounded collection controls, sanitized mapping counters, complete operator guidance, and 166 tests pass |
 | 8 | End-to-end and Raspberry Pi acceptance | Pending | Upgrade, cold/cached scans, manual correction, playback, and resource evidence pass |
 
 ## Goals
@@ -648,7 +648,7 @@ unmapped playback, one-player behavior, and cross-group controller semantics.
 
 ## Step 7 — Operator controls, observability, and documentation
 
-**Status: Pending**
+**Status: Done**
 
 - Add a read-only CLI command to inspect one collection's:
   primary work, candidates, manual rules, per-file mapping, provenance,
@@ -683,6 +683,19 @@ unmapped playback, one-player behavior, and cross-group controller semantics.
 - Documentation examples parse under the real sidecar parser.
 
 **Commit:** `feat: add multi-work mapping controls`.
+
+**Implemented:** The `mapping` CLI family provides deterministic JSON
+inspection, real-parser sidecar dry runs, bounded candidate refresh,
+model-only mapping/cache invalidation, and deterministic recomputation for one
+exact collection path. Mutations share the service instance lock and preserve
+media and normalized provider metadata. Inspection caps file output, exposes
+provenance/cache presence and deterministic outcome reasons, and omits
+sidecar/model payloads, digests, and secrets. Each scan logs one filename-free
+`mapping_stats` aggregate covering suspicion, candidates, mapping sources,
+cache state, ambiguity/unmapped counts, conflicts, and provider/model
+failures. README, CHANGELOG, and ADR consequences document native/container
+operation, SIGHUP/cache behavior, privacy, troubleshooting, backups/upgrades,
+and safe MAL ID replacement.
 
 ## Step 8 — End-to-end and Raspberry Pi acceptance
 

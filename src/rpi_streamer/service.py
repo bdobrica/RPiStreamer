@@ -19,10 +19,12 @@ from pathlib import Path
 from types import FrameType
 from typing import Final, TextIO, cast
 
+from rpi_streamer.candidates import multi_work_suspicion
 from rpi_streamer.config import Settings
 from rpi_streamer.database import CatalogueRepository, ProviderRecord, ScanRun
 from rpi_streamer.generator import GeneratedSite, generate_site
 from rpi_streamer.inference import OpenAIInferenceClient
+from rpi_streamer.mapping import preview_entry_deterministically
 from rpi_streamer.metadata import (
     JikanProvider,
     ProviderError,
@@ -128,12 +130,83 @@ def run_once(settings: Settings) -> RunSummary:
                 result.error_count,
                 _safe_log_value(result.summary),
             )
+        metrics = _mapping_metrics(repository, result)
+        LOGGER.info(
+            "event=mapping_stats scan_id=%d suspected=%d candidates=%d "
+            "manual=%d deterministic=%d model=%d cache_hits=%d ambiguous=%d "
+            "unmapped=%d conflicts=%d provider_failures=%d model_failures=%d",
+            result.id,
+            *metrics,
+        )
         generated = generate_site(
             repository,
             site_dir=settings.site_dir,
             state_dir=settings.state_dir,
         )
     return _summary(result, generated)
+
+
+def _mapping_metrics(
+    repository: CatalogueRepository, scan: ScanRun
+) -> tuple[int, int, int, int, int, int, int, int, int, int, int]:
+    """Return bounded aggregate counters without exposing collection names."""
+
+    suspected = candidates = manual = deterministic = model = cache_hits = 0
+    ambiguous = unmapped = 0
+    for entry in repository.list_library_entries():
+        works = repository.list_library_entry_works(entry.id)
+        media_files = repository.list_media_files(entry.id)
+        primary_work = next((work for work in works if work.is_primary), None)
+        primary_record = (
+            None
+            if primary_work is None
+            else repository.get_provider_record_for_work(primary_work.id)
+        )
+        if primary_record is not None:
+            suspicion = multi_work_suspicion(
+                [media.filename for media in media_files],
+                primary_record,
+                repository.list_relations(primary_record.id),
+                has_manual_candidates=any(
+                    work.source == "manual" and not work.is_primary for work in works
+                ),
+            )
+            suspected += int(suspicion.suspected)
+        candidates += sum(work.source == "relation" for work in works)
+        mappings = repository.list_media_work_mappings(entry.id)
+        mapped_ids = {mapping.media_file_id for mapping in mappings}
+        for mapping in mappings:
+            manual += int(mapping.source.startswith("manual_"))
+            deterministic += int(mapping.source == "deterministic")
+            model += int(mapping.source == "model")
+            cache_hits += int(
+                mapping.source == "model"
+                and repository.get_inference_cache(mapping.input_digest) is not None
+            )
+        unmapped += sum(media.id not in mapped_ids for media in media_files)
+        ambiguous += sum(
+            decision.outcome == "ambiguous"
+            for decision in preview_entry_deterministically(
+                repository, entry.id
+            ).decisions
+        )
+    summary = (scan.summary or "").casefold()
+    conflicts = summary.count("multiple manual") + summary.count("conflict")
+    provider_failures = summary.count("provider") + summary.count("mal id")
+    model_failures = summary.count("model")
+    return (
+        suspected,
+        candidates,
+        manual,
+        deterministic,
+        model,
+        cache_hits,
+        ambiguous,
+        unmapped,
+        conflicts,
+        provider_failures,
+        model_failures,
+    )
 
 
 def _summary(scan: ScanRun, generated: GeneratedSite) -> RunSummary:

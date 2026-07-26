@@ -28,3 +28,9 @@ Unambiguous moves on the same filesystem retain catalogue identity and cached
 metadata. Scans stay proportional to directory and stat operations rather than
 media size. Operators must back up SQLite consistently, including WAL state or
 using SQLite's backup API, and older binaries cannot open newer schemas.
+
+Multi-work operator mutations use the same instance lock as scans and are
+scoped by collection foreign keys. Model invalidation deletes only selected
+model mapping rows and their exact inference-cache keys; provider records and
+media rows remain intact. Sidecar validation and mapping inspection are
+read-only.

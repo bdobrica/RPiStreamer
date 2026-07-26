@@ -29,6 +29,7 @@ class CliTestCase(unittest.TestCase):
                     f"state_dir = {root / 'state'}",
                     f"site_dir = {root / 'state' / 'site'}",
                     f"database_path = {root / 'state' / 'catalogue.db'}",
+                    "metadata_provider = none",
                 )
             )
             + "\n",
@@ -141,3 +142,92 @@ class CliTestCase(unittest.TestCase):
                 main(["--config", str(self.config_path), "healthcheck"]),
                 EXIT_UNAVAILABLE,
             )
+
+    def test_mapping_inspect_is_deterministic_and_sidecar_validation_is_dry_run(
+        self,
+    ) -> None:
+        collection = self.config_path.parent / "media" / "Show"
+        collection.mkdir()
+        (collection / "01 <pilot>.mp4").write_bytes(b"video")
+        (collection / "rpi-streamer.ini").write_text(
+            "[rpi-streamer]\ndisplay_title = Show\n",
+            encoding="utf-8",
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(main(["--config", str(self.config_path), "scan"]), EXIT_OK)
+            outputs = []
+            for _ in range(2):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "--config",
+                            str(self.config_path),
+                            "mapping",
+                            "inspect",
+                            "Show",
+                        ]
+                    )
+                self.assertEqual(result, EXIT_OK)
+                outputs.append(stdout.getvalue())
+            validated = io.StringIO()
+            with contextlib.redirect_stdout(validated):
+                validation_result = main(
+                    [
+                        "--config",
+                        str(self.config_path),
+                        "mapping",
+                        "validate-sidecar",
+                        "Show",
+                    ]
+                )
+
+        self.assertEqual(validation_result, EXIT_OK)
+        self.assertEqual(outputs[0], outputs[1])
+        payload = json.loads(outputs[0])
+        self.assertEqual(payload["collection"], "Show")
+        self.assertEqual(payload["files"][0]["filename"], "01 <pilot>.mp4")
+        self.assertNotIn("digest", outputs[0])
+        self.assertNotIn("api_key", outputs[0])
+        self.assertEqual(json.loads(validated.getvalue())["status"], "valid")
+
+    def test_mapping_commands_report_unknown_collection_and_invalid_sidecar(
+        self,
+    ) -> None:
+        collection = self.config_path.parent / "media" / "Broken"
+        collection.mkdir()
+        (collection / "01.mp4").write_bytes(b"video")
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(main(["--config", str(self.config_path), "scan"]), EXIT_OK)
+            unknown_error = io.StringIO()
+            with contextlib.redirect_stderr(unknown_error):
+                unknown = main(
+                    [
+                        "--config",
+                        str(self.config_path),
+                        "mapping",
+                        "inspect",
+                        "Missing",
+                    ]
+                )
+            (collection / "rpi-streamer.ini").write_text(
+                "[rpi-streamer]\nunknown = secret-value\n",
+                encoding="utf-8",
+            )
+            invalid_error = io.StringIO()
+            with contextlib.redirect_stderr(invalid_error):
+                invalid = main(
+                    [
+                        "--config",
+                        str(self.config_path),
+                        "mapping",
+                        "validate-sidecar",
+                        "Broken",
+                    ]
+                )
+
+        self.assertEqual(unknown, EXIT_UNAVAILABLE)
+        self.assertIn("unknown collection", unknown_error.getvalue())
+        self.assertEqual(invalid, EXIT_USAGE)
+        self.assertIn("invalid sidecar", invalid_error.getvalue())
+        self.assertNotIn("secret-value", invalid_error.getvalue())

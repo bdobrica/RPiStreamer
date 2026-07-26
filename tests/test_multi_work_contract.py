@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
+from rpi_streamer.sidecar import read_sidecar, validate_local_files
+
 FIXTURES = Path(__file__).parent / "fixtures" / "multi_work"
 SECTION_RE = re.compile(r'^(?:rpi-streamer|(?:work|media) "[^"\r\n]{1,64}")$')
 
@@ -123,3 +125,5 @@ class MultiWorkContractFixtureTests(unittest.TestCase):
                 self.assertTrue(all(SECTION_RE.fullmatch(s) for s in parser.sections()))
                 self.assertIn("rpi-streamer", parser)
                 self.assertGreater(int(parser["rpi-streamer"]["mal_id"]), 0)
+                sidecar = read_sidecar(FIXTURES / f"{name}.ini")
+                validate_local_files(sidecar, set(expand_files(load_fixture(name))))

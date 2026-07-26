@@ -50,3 +50,9 @@ retain the standard-library runtime footprint. Verified metadata still depends
 on the configured MAL transport, and operators must protect configuration
 backups containing a key. Ambiguous files can remain unmapped, and operators
 retain final control through exact or rule-based sidecar mappings.
+
+Operators can inspect whether a model cache exists without seeing its prompt,
+response, digest, or credential. Per-collection invalidation removes only
+model-derived mappings and the exact cache rows referenced by them. Ordinary
+SIGHUP rescans continue honoring caches and the shared call budget. Aggregate
+logs expose model mapping/cache/failure counts without filenames or payloads.

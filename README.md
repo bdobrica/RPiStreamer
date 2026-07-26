@@ -357,6 +357,80 @@ file remains playable. Add an exact `[media "..."]` override or `[work "..."]`
 rule whenever an automatic answer is undesirable; it takes effect before any
 later model request.
 
+### Inspecting and correcting multi-work mappings
+
+All mapping commands identify a collection by its exact path relative to
+`media_root`; quote paths containing spaces. Inspection and validation are
+read-only:
+
+```bash
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
+  mapping inspect "MF Ghost"
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
+  mapping validate-sidecar "MF Ghost"
+```
+
+`mapping inspect` prints one deterministic JSON object containing the primary
+MAL ID, verified candidates, a bounded summary of manual rules, at most 200
+files, mapping provenance/confidence, model-cache presence, and deterministic
+ambiguity or unmapped reasons. It never prints sidecar contents, inference
+digests, prompts, responses, or credentials. `mapping validate-sidecar`
+dry-runs the real parser and checks exact filenames and globs without changing
+SQLite or the generated catalogue.
+
+The bounded mutation commands take the same instance lock as a scan and affect
+only the named collection. Stop the long-running indexer before invoking them
+(`sudo systemctl stop rpi-streamer` natively, or `docker compose stop indexer`
+for Compose), then start it again afterward:
+
+```bash
+# Re-evaluate the cached/bounded relation graph; missing candidates may use
+# the configured Tenrai/Jikan transport.
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
+  mapping refresh-candidates "MF Ghost"
+
+# Remove only model-derived mappings and their exact cache entries.
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
+  mapping invalidate-model "MF Ghost"
+
+# Re-run only deterministic mapping with current files, candidates and rules.
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
+  mapping recompute "MF Ghost"
+```
+
+For Compose, prefix the same command with `docker compose run --rm indexer`
+after stopping `indexer`, then use `docker compose start indexer`. The
+configured state volume is reused, while the media mount remains read-only.
+
+These commands do not delete media or normalized provider metadata. Run a
+normal scan afterward to execute the complete precedence chain and republish
+HTML. After restarting the indexer, it performs that scan immediately. For an
+additional later scan, native installations can use `sudo systemctl reload
+rpi-streamer`; Compose installations can use `docker compose kill -s HUP
+indexer`. An ordinary scan or SIGHUP continues honoring valid provider/model
+caches and the configured OpenAI call budget; it is not a force-refresh
+operation.
+
+Each scan writes one sanitized `event=mapping_stats` log record with aggregate
+suspected/candidate, provenance, cache, ambiguity/unmapped, conflict, and
+provider/model-failure counters. It contains no filenames or sidecar/model
+payloads. For native installs, inspect it with:
+
+```bash
+journalctl -u rpi-streamer --since "10 minutes ago" \
+  --grep 'event=(mapping_stats|scan_issues|scan_finished)' --no-pager
+```
+
+To find a real MAL ID, locate the exact anime on MyAnimeList and copy only the
+positive integer after `/anime/` in its canonical URL; for example,
+`https://myanimelist.net/anime/50695/MF_Ghost` yields `50695`. Confirm the
+title, media type, year, and season on that page before adding the number to
+`mal_id`, `related_mal_ids`, `[work "..."]`, or `[media "..."]`. Replace every
+placeholder ID in documentation examples and run `mapping
+validate-sidecar`; the following scan verifies uncached IDs through the
+configured metadata transport before associating them. An unavailable or
+non-anime ID remains pending and does not displace a last-known-good mapping.
+
 The conventional `lost+found` directory is ignored only when it is directly
 under `media_root`, preventing an ext filesystem recovery directory from
 making every scan partial. A nested directory with that name is treated

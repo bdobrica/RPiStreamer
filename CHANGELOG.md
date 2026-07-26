@@ -19,6 +19,11 @@ All notable changes are documented here. This project follows
 - Repository-root install, backup, update, validation, and uninstall targets.
 - Offline end-to-end fixtures and CI across supported Python versions.
 - Architecture decision records for the shipped design.
+- Multi-work collections with manual, deterministic, and optional
+  model-assisted file mappings; grouped single-player catalogue pages; and
+  bounded per-collection inspection, validation, refresh, invalidation, and
+  recomputation controls.
+- Sanitized aggregate mapping counters for native and container scan logs.
 
 ### Security
 

@@ -214,6 +214,16 @@ class ServiceTestCase(unittest.TestCase):
         self.assertIn("invalid sidecar", message)
         self.assertNotIn("\nline", message)
 
+    def test_run_once_logs_sanitized_mapping_counters(self) -> None:
+        with self.assertLogs("rpi_streamer.service", level="INFO") as captured:
+            run_once(self.settings)
+
+        message = "\n".join(captured.output)
+        self.assertIn("event=mapping_stats", message)
+        self.assertIn("suspected=0", message)
+        self.assertIn("unmapped=0", message)
+        self.assertNotIn("api_key", message)
+
     def test_request_stop_wakes_waiter(self) -> None:
         event = threading.Event()
         service = Service(self.settings, event=event)
