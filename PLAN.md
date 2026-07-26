@@ -19,7 +19,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | 0 | Contract, fixtures, and architecture decision | Done | Frozen contract, ADR 0008, threat model, three sanitized fixture families, and 118 tests pass |
 | 1 | Multi-work SQLite model and migration | Done | Schema 6 migration preserves provider graphs/IDs, adds constrained associations and mappings, and 122 tests pass |
 | 2 | Sidecar work rules and exact media overrides | Done | Bounded parser, cached/live verification, digest reconciliation, manual precedence, and 135 tests pass |
-| 3 | Tenrai relation discovery and candidate cache | Pending | Bounded verified candidate graph works online and from cache |
+| 3 | Tenrai relation discovery and candidate cache | Done | Depth-3/12-work verified graph, suspicion gate, offline cache, provenance, and 143 tests pass |
 | 4 | Deterministic file-to-work mapping | Pending | MF Ghost and Tsukimichi map without model calls where rules or filenames suffice |
 | 5 | Structured LLM-assisted mapping | Pending | Unresolved files receive validated, cached candidate mappings within the call budget |
 | 6 | Grouped catalogue rendering | Pending | One player groups seasons and tie-ins while retaining no-JS playback |
@@ -420,7 +420,7 @@ entirely from manual rules.
 
 ## Step 3 — Tenrai relation discovery and candidates
 
-**Status: Pending**
+**Status: Done**
 
 - Starting from the verified primary work, traverse only anime relations with
   allowed types: sequel, prequel, side story, parent story, spin-off, summary,
@@ -462,6 +462,15 @@ entirely from manual rules.
 
 **Documentation/commit:** document relation bounds and offline behavior;
 commit as `feat: discover related metadata works`.
+
+**Completion:** candidate discovery starts from the verified primary work,
+merges existing manual associations, prioritizes sequel edges, filters to the
+reviewed anime relation vocabulary, and records relation source/distance.
+Traversal is cycle-safe and capped at depth 3 and 12 total collection works.
+The cheap suspicion gate skips ordinary folders; normalized records provide
+offline traversal; missing records use the shared throttled verifier; and
+partial provider failures retain the prior candidate set. MF Ghost and
+Tsukimichi fixture graphs discover all expected seasons without OpenAI.
 
 ## Step 4 — Deterministic mapping engine
 

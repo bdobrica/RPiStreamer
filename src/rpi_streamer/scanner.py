@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
+from rpi_streamer.candidates import discover_related_candidates
 from rpi_streamer.database import CatalogueRepository, ProviderRecord, ScanRun
 from rpi_streamer.sidecar import (
     MediaOverride,
@@ -307,10 +308,17 @@ def scan_library(
             timestamp,
             verify_work=verify_work,
         )
+        candidate_errors = _discover_relation_candidates(
+            repository,
+            discovery.titles,
+            timestamp,
+            verify_work=verify_work,
+        )
         issues = (
             *discovery.issues,
             *(ScanIssue("metadata", error) for error in metadata_errors),
             *(ScanIssue("mapping", error) for error in mapping_errors),
+            *(ScanIssue("candidates", error) for error in candidate_errors),
         )
         status = "partial" if issues else "success"
         summary = _summary(issues)
@@ -401,29 +409,36 @@ def _reconcile_manual_mappings(
             existing = repository.get_library_entry_work_by_provider_id(
                 entry.id, "jikan", provider_id
             )
-            is_primary = provider_id == sidecar.mal_id
-            if existing is not None and rule is None:
-                work = existing
-            else:
-                local_name = (
-                    rule.name
+            is_primary = provider_id == sidecar.mal_id or (
+                sidecar.mal_id is None and existing is not None and existing.is_primary
+            )
+            local_name = (
+                rule.name
+                if rule is not None
+                else (
+                    existing.local_name
+                    if existing is not None
+                    else f"manual-{provider_id}"
+                )
+            )
+            work = repository.associate_library_entry_work(
+                library_entry_id=entry.id,
+                provider_record_id=record.id,
+                local_name=local_name,
+                source="manual",
+                verified_at=timestamp,
+                is_primary=is_primary,
+                label=(
+                    rule.label
                     if rule is not None
-                    else (
-                        existing.local_name
-                        if existing is not None
-                        else f"manual-{provider_id}"
-                    )
-                )
-                work = repository.associate_library_entry_work(
-                    library_entry_id=entry.id,
-                    provider_record_id=record.id,
-                    local_name=local_name,
-                    source="manual",
-                    verified_at=timestamp,
-                    is_primary=is_primary,
-                    label=None if rule is None else rule.label,
-                    display_order=0 if rule is None else rule.order,
-                )
+                    else (None if existing is None else existing.label)
+                ),
+                display_order=(
+                    rule.order
+                    if rule is not None
+                    else (0 if existing is None else existing.display_order)
+                ),
+            )
             work_by_id[provider_id] = work.id
             retained_record_ids.add(record.id)
 
@@ -550,6 +565,32 @@ def _reconcile_manual_mappings(
         repository.set_mapping_rules_digest(
             entry.id, sidecar.digest, updated_at=timestamp
         )
+    return tuple(errors)
+
+
+def _discover_relation_candidates(
+    repository: CatalogueRepository,
+    titles: Sequence[DiscoveredTitle],
+    timestamp: datetime,
+    *,
+    verify_work: WorkVerifier | None,
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    for title in titles:
+        if not title.sidecar_valid:
+            continue
+        entry = repository.get_library_entry(title.relative_path)
+        if entry is None:
+            continue
+        result = discover_related_candidates(
+            repository,
+            entry,
+            [media.filename for media in title.files],
+            has_manual_candidates=bool(title.sidecar.manual_candidate_ids),
+            verified_at=timestamp,
+            verify_work=verify_work,
+        )
+        errors.extend(result.errors)
     return tuple(errors)
 
 

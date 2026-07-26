@@ -362,7 +362,7 @@ class MultiWorkMigrationTestCase(unittest.TestCase):
         connection.execute(
             """
             INSERT INTO library_entry_works VALUES (
-                1, 1, 1, 1, 'primary', NULL, 0, 'matched', NULL,
+                1, 1, 1, 1, 'primary', NULL, 0, 'relation', NULL,
                 '2026-01-01T00:00:00+00:00',
                 '2026-01-01T00:00:00+00:00'
             )
@@ -384,6 +384,9 @@ class MultiWorkMigrationTestCase(unittest.TestCase):
             mapping = repository.get_media_work_mapping(1)
             assert mapping is not None
             self.assertEqual(mapping.kind, "summary")
+            work = repository.get_primary_library_entry_work(1)
+            assert work is not None
+            self.assertEqual(work.relation_distance, 1)
             self.assertEqual(repository.schema_version, LATEST_SCHEMA_VERSION)
 
 

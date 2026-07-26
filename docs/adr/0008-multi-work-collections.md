@@ -89,5 +89,15 @@ Jikan-compatible anime verification. Uncached IDs remain pending during an
 outage. Exact overrides precede AND-combined work selectors, and overlapping
 work rules retain the last valid result while making the scan partial.
 
+Schema version 8 and the candidate discovery layer implement the verified
+relation boundary. Expansion begins at the primary work only when local,
+manual, or cached-relation evidence suggests multiple works. It follows the
+reviewed anime relation vocabulary, prioritizes sequels, detects cycles, and
+stops at depth 3 or 12 total collection works. Normalized provider records are
+the offline cache; missing targets use the shared provider verifier and its
+throttling. Relation associations persist source and distance, while partial
+outages preserve the last verified set. No model participates in candidate
+identity discovery.
+
 Arbitrary regular expressions, unverified model IDs, unbounded franchise
 graphs, and silent conflict resolution are deliberately excluded.

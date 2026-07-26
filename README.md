@@ -273,6 +273,30 @@ derived mappings. Unknown sections/keys, missing exact files, unsafe or
 unmatched globs, and malformed values make the scan partial without rewriting
 the media tree or discarding prior sidecar-derived state.
 
+### Related-work candidate discovery
+
+After the primary work and manual candidates are verified, the indexer can
+discover additional candidates from cached Tenrai/Jikan-compatible anime
+relations. It follows only sequel, prequel, side story, parent story, spin-off,
+summary, alternative version, and reviewed `other` links. Direct sequel links
+are considered first. Traversal is cycle-safe and limited to depth 3 and 12
+total works per collection, including the primary and manual candidates.
+Manga and other non-anime identities, unsupported relation types, and
+non-`jikan` identity namespaces are ignored.
+
+Graph expansion runs only when cheap evidence suggests a multi-work
+collection: an explicit manual candidate, season number above one, reset
+episode numbering, local file count/number beyond the primary episode count,
+a Movie/OVA/OAD/ONA/Special/Digest/Summary marker, or a relevant cached
+provider relation. Ordinary single-work folders do no relation fetches.
+
+Normalized provider records are the candidate cache. Missing related IDs are
+fetched lazily through the same configured provider, sharing its throttling
+and retry policy. Cached graphs continue to work offline. A transient failure
+makes the scan partial and retains earlier verified candidate associations;
+the model is never used to discover or verify MAL IDs. Relation-derived
+associations record their source and distance from the primary work.
+
 The conventional `lost+found` directory is ignored only when it is directly
 under `media_root`, preventing an ext filesystem recovery directory from
 making every scan partial. A nested directory with that name is treated
@@ -850,7 +874,7 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 7 contains:
+Schema version 8 contains:
 
 | Table | Stored data |
 |---|---|
@@ -859,7 +883,7 @@ Schema version 7 contains:
 | `media_files` | Relative MP4 paths, filesystem identity, size/mtime, deterministic and inferred episode hints, and availability |
 | `inference_cache` | Digest-keyed structured model results, model/schema version, and timestamp |
 | `provider_records` | Reusable normalized work details keyed by provider/MAL ID, cache validators and transport provenance, refresh time, and compact raw detail JSON |
-| `library_entry_works` | Collection-to-work associations, primary work, local name/label/order, source, confidence, and verification timestamps |
+| `library_entry_works` | Collection-to-work associations, primary work, local name/label/order, source, confidence, relation distance, and verification timestamps |
 | `media_work_mappings` | Optional file-to-work mapping, media kind/episode range, provenance, confidence, inference model/schema, input digest, and timestamps |
 | `library_entry_mapping_state` | Canonical sidecar-rules digest used to invalidate derived mappings without storing configuration secrets |
 | `provider_episodes` | Provider episode number, title, air date, filler, and recap flags |
@@ -907,6 +931,9 @@ Schema 7 aligns stored mapping kinds with the public sidecar vocabulary and
 preserves schema-6 mappings (`recap` becomes `summary`; `other` becomes
 `unknown`).
 
+Schema 8 records the bounded relation distance for automatically discovered
+candidate associations.
+
 ### Database backup and restore
 
 Generated HTML is disposable, but `catalogue.db` contains mapping and cached
@@ -919,10 +946,11 @@ sqlite3 /var/lib/rpi-streamer/catalogue.db \
   ".backup '/path/to/backup/catalogue.db'"
 ```
 
-Take and retain a verified backup before upgrading a schema-5 or schema-6
-installation. Schema normalization is forward-only: an older RPi Streamer binary
-cannot read the migrated database, and restoring only the database while
-leaving newer generated/state files can produce an inconsistent rollback.
+Take and retain a verified backup before upgrading a schema-5, schema-6, or
+schema-7 installation. Schema normalization is forward-only: an older RPi
+Streamer binary cannot read the migrated database, and restoring only the
+database while leaving newer generated/state files can produce an inconsistent
+rollback.
 
 Alternatively, stop the indexer before copying `catalogue.db` together with
 any present `catalogue.db-wal` and `catalogue.db-shm` files. Restore only while

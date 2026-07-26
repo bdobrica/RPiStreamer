@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 7
+LATEST_SCHEMA_VERSION: Final = 8
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -80,6 +80,7 @@ class LibraryEntryWork:
     display_order: int
     source: str
     confidence: float | None
+    relation_distance: int | None
     first_verified_at: datetime
     last_verified_at: datetime
 
@@ -709,6 +710,24 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
         """,
         """
         PRAGMA foreign_key_check
+        """,
+    ),
+    8: (
+        """
+        ALTER TABLE library_entry_works
+        ADD COLUMN relation_distance INTEGER CHECK (
+            relation_distance IS NULL
+            OR (relation_distance >= 1 AND relation_distance <= 3)
+        )
+        """,
+        """
+        UPDATE library_entry_works
+        SET relation_distance = 1
+        WHERE source = 'relation'
+        """,
+        """
+        CREATE INDEX library_entry_works_relation_idx
+        ON library_entry_works(library_entry_id, source, relation_distance)
         """,
     ),
 }
@@ -1387,11 +1406,18 @@ class CatalogueRepository:
         label: str | None = None,
         display_order: int = 0,
         confidence: float | None = None,
+        relation_distance: int | None = None,
     ) -> LibraryEntryWork:
         if display_order < 0:
             raise ValueError("display_order must be non-negative")
         if confidence is not None and not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if relation_distance is not None and not 1 <= relation_distance <= 3:
+            raise ValueError("relation_distance must be between 1 and 3")
+        if (source == "relation") != (relation_distance is not None):
+            raise ValueError(
+                "relation_distance is required only for relation associations"
+            )
         timestamp = _utc_text(verified_at)
         with self.transaction():
             if is_primary:
@@ -1408,8 +1434,8 @@ class CatalogueRepository:
                 INSERT INTO library_entry_works(
                     library_entry_id, provider_record_id, is_primary,
                     local_name, label, display_order, source, confidence,
-                    first_verified_at, last_verified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    first_verified_at, last_verified_at, relation_distance
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(library_entry_id, provider_record_id) DO UPDATE SET
                     is_primary = excluded.is_primary,
                     local_name = excluded.local_name,
@@ -1417,6 +1443,7 @@ class CatalogueRepository:
                     display_order = excluded.display_order,
                     source = excluded.source,
                     confidence = excluded.confidence,
+                    relation_distance = excluded.relation_distance,
                     last_verified_at = excluded.last_verified_at
                 """,
                 (
@@ -1430,6 +1457,7 @@ class CatalogueRepository:
                     confidence,
                     timestamp,
                     timestamp,
+                    relation_distance,
                 ),
             )
         work = next(
@@ -1567,6 +1595,27 @@ class CatalogueRepository:
                 DELETE FROM library_entry_works
                 WHERE library_entry_id = ?
                   AND source = 'manual'
+                  AND is_primary = 0
+                  {retained_clause}
+                """,
+                (library_entry_id, *sorted(retained_provider_record_ids)),
+            )
+
+    def remove_stale_relation_work_associations(
+        self, library_entry_id: int, retained_provider_record_ids: set[int]
+    ) -> None:
+        placeholders = ",".join("?" for _ in retained_provider_record_ids)
+        retained_clause = (
+            f"AND provider_record_id NOT IN ({placeholders})"
+            if retained_provider_record_ids
+            else ""
+        )
+        with self.transaction():
+            self._connection.execute(
+                f"""
+                DELETE FROM library_entry_works
+                WHERE library_entry_id = ?
+                  AND source = 'relation'
                   AND is_primary = 0
                   {retained_clause}
                 """,
@@ -2092,6 +2141,9 @@ def _library_entry_work(row: sqlite3.Row) -> LibraryEntryWork:
         display_order=int(row["display_order"]),
         source=str(row["source"]),
         confidence=None if row["confidence"] is None else float(row["confidence"]),
+        relation_distance=(
+            None if row["relation_distance"] is None else int(row["relation_distance"])
+        ),
         first_verified_at=first_verified,
         last_verified_at=last_verified,
     )
