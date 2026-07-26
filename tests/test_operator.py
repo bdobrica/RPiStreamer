@@ -6,7 +6,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from rpi_streamer.database import CatalogueRepository, Relation
-from rpi_streamer.operator import invalidate_model, refresh_candidates
+from rpi_streamer.operator import (
+    inspect_collection,
+    invalidate_model,
+    refresh_candidates,
+)
 
 NOW = datetime(2026, 7, 26, 17, 0, tzinfo=UTC)
 
@@ -81,6 +85,43 @@ class OperatorControlTests(unittest.TestCase):
         self.assertIsNotNone(
             self.repository.get_provider_record_by_provider_id("jikan", "1")
         )
+
+    def test_inspection_keeps_active_model_mapping_separate_from_preview(
+        self,
+    ) -> None:
+        self._model_mapping("Collection", "1", "digest")
+        entry = self.repository.get_library_entry("Collection")
+        assert entry is not None
+        related = self.repository.upsert_detached_provider_record(
+            provider="jikan",
+            provider_id="2",
+            canonical_title="Collection Part 2",
+            raw_data={"mal_id": 2},
+            fetched_at=NOW,
+            validator_source="tenrai",
+        )
+        self.repository.associate_library_entry_work(
+            library_entry_id=entry.id,
+            provider_record_id=related.id,
+            local_name="part-2",
+            source="relation",
+            relation_distance=1,
+            verified_at=NOW,
+        )
+
+        result = inspect_collection(
+            self.repository, Path(self.temporary.name) / "media", "Collection"
+        )
+        files = result["files"]
+        assert isinstance(files, list)
+        inspected = files[0]
+
+        self.assertEqual(inspected["outcome"], "mapped")
+        self.assertEqual(inspected["reason"], "active model mapping")
+        self.assertEqual(inspected["source"], "model")
+        self.assertEqual(inspected["mal_id"], "1")
+        self.assertEqual(inspected["deterministic_outcome"], "unmapped")
+        self.assertIn("candidate boundaries", inspected["deterministic_reason"])
 
     def test_candidate_refresh_associates_only_the_selected_collection(self) -> None:
         first_media = self._model_mapping("First", "10", "digest-first")

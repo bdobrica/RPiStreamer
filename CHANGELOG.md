@@ -34,6 +34,8 @@ All notable changes are documented here. This project follows
 
 - Download and render covers for newly verified related works, and backfill
   missing related-work covers from existing normalized metadata caches.
+- Report persisted mappings as authoritative in `mapping inspect`, with the
+  non-mutating deterministic preview exposed through separate fields.
 
 ### Security
 

@@ -79,8 +79,20 @@ def inspect_collection(
                 "source": None if mapping is None else mapping.source,
                 "confidence": None if mapping is None else mapping.confidence,
                 "cache": "present" if cache is not None else "none",
-                "outcome": "unmapped" if decision is None else decision.outcome,
+                "outcome": "mapped" if mapping is not None else "unmapped",
                 "reason": (
+                    (
+                        "no persisted mapping"
+                        if decision is None
+                        else _bounded(decision.reason, 160)
+                    )
+                    if mapping is None
+                    else f"active {mapping.source} mapping"
+                ),
+                "deterministic_outcome": (
+                    "none" if decision is None else decision.outcome
+                ),
+                "deterministic_reason": (
                     "no deterministic decision"
                     if decision is None
                     else _bounded(decision.reason, 160)

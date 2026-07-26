@@ -379,8 +379,11 @@ rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
 
 `mapping inspect` prints one deterministic JSON object containing the primary
 MAL ID, verified candidates, a bounded summary of manual rules, at most 200
-files, mapping provenance/confidence, model-cache presence, and deterministic
-ambiguity or unmapped reasons. It never prints sidecar contents, inference
+files, authoritative persisted mapping outcome/provenance/confidence,
+model-cache presence, and a separately labelled deterministic preview with
+ambiguity or unmapped reasons. A valid manual, deterministic, or model row
+therefore reports `outcome = mapped` even when the dry-run heuristic would
+decline that filename. Inspection never prints sidecar contents, inference
 digests, prompts, responses, or credentials. `mapping validate-sidecar`
 dry-runs the real parser and checks exact filenames and globs without changing
 SQLite or the generated catalogue.

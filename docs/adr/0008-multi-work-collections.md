@@ -132,6 +132,9 @@ failure never blocks association, mapping, generation, or playback.
 
 Operators can inspect one exact collection through deterministic, bounded JSON
 without exposing raw sidecars, cache digests, prompts, responses, or secrets.
+Persisted mapping state is authoritative in that output; the current
+deterministic heuristic is reported separately as a non-mutating preview so it
+cannot make an active manual or model mapping appear unresolved.
 Sidecar validation is read-only. Candidate refresh, model-only invalidation,
 and deterministic recomputation share the service instance lock and affect
 only the selected collection. Ordinary `SIGHUP` rescans retain valid provider
