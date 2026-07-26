@@ -776,7 +776,7 @@ ORM. Opening `CatalogueRepository(database_path)` creates the parent directory,
 opens the database, applies pending migrations, and exposes typed records
 instead of requiring application code to issue SQL.
 
-Schema version 5 contains:
+Schema version 6 contains:
 
 | Table | Stored data |
 |---|---|
@@ -784,7 +784,10 @@ Schema version 5 contains:
 | `library_entries` | Title folders, display/sort titles, availability, and metadata overrides |
 | `media_files` | Relative MP4 paths, filesystem identity, size/mtime, deterministic and inferred episode hints, and availability |
 | `inference_cache` | Digest-keyed structured model results, model/schema version, and timestamp |
-| `provider_records` | Normalized title details, MAL IDs, cache validators and their transport provenance, refresh time, and compact raw detail JSON |
+| `provider_records` | Reusable normalized work details keyed by provider/MAL ID, cache validators and transport provenance, refresh time, and compact raw detail JSON |
+| `library_entry_works` | Collection-to-work associations, primary work, local name/label/order, source, confidence, and verification timestamps |
+| `media_work_mappings` | Optional file-to-work mapping, media kind/episode range, provenance, confidence, inference model/schema, input digest, and timestamps |
+| `library_entry_mapping_state` | Canonical sidecar-rules digest used to invalidate derived mappings without storing configuration secrets |
 | `provider_episodes` | Provider episode number, title, air date, filler, and recap flags |
 | `aliases` | Provider title aliases by type |
 | `genres` / `provider_record_genres` | Case-insensitive normalized genres and title membership |
@@ -818,6 +821,14 @@ remain available so an unreadable subtree cannot erase the previous
 catalogue. Remote calls occur only for new, manually rematched, or stale
 titles, and failures do not discard the last cached provider record.
 
+Schema 6 migrates each schema-5 folder metadata match to one primary
+collection-work association. Provider records and their episode, alias, genre,
+relation, artwork, raw-response, validator, and inference-cache data retain
+their identities. Existing files deliberately remain unmapped until the
+multi-work reconciliation stage; current pages continue to resolve the
+primary association and therefore keep their collection slug, metadata, and
+player ordering.
+
 ### Database backup and restore
 
 Generated HTML is disposable, but `catalogue.db` contains mapping and cached
@@ -829,6 +840,11 @@ active:
 sqlite3 /var/lib/rpi-streamer/catalogue.db \
   ".backup '/path/to/backup/catalogue.db'"
 ```
+
+Take and retain a verified backup before upgrading a schema-5 installation.
+The schema-6 normalization is forward-only: an older RPi Streamer binary
+cannot read the migrated database, and restoring only the database while
+leaving newer generated/state files can produce an inconsistent rollback.
 
 Alternatively, stop the indexer before copying `catalogue.db` together with
 any present `catalogue.db-wal` and `catalogue.db-shm` files. Restore only while

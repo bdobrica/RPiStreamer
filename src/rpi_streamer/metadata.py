@@ -552,6 +552,7 @@ def enrich_catalogue(
                     raise ProviderError("provider returned 304 without cached metadata")
                 _refresh_cached_record(
                     repository,
+                    entry.id,
                     record,
                     result.validators,
                     provider.transport_name,
@@ -829,13 +830,14 @@ def _preferred_title(details: AnimeDetails, language: str) -> str:
 
 def _refresh_cached_record(
     repository: CatalogueRepository,
+    library_entry_id: int,
     record: ProviderRecord,
     validators: CacheValidators,
     validator_source: str,
     timestamp: datetime,
 ) -> None:
     repository.upsert_provider_record(
-        library_entry_id=record.library_entry_id,
+        library_entry_id=library_entry_id,
         provider=record.provider,
         provider_id=record.provider_id,
         canonical_title=record.canonical_title,

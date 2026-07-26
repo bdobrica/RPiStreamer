@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from rpi_streamer.database import (
+    _MIGRATIONS,
     BUSY_TIMEOUT_MS,
     LATEST_SCHEMA_VERSION,
     CatalogueRepository,
@@ -95,40 +96,43 @@ class DatabaseTestCase(unittest.TestCase):
     def test_schema_four_records_gain_jikan_validator_provenance(self) -> None:
         path = Path(self.temporary_directory.name) / "schema-four.db"
         connection = sqlite3.connect(path)
-        connection.executescript(
+        connection.execute(
             """
             CREATE TABLE schema_migrations (
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL
-            );
-            INSERT INTO schema_migrations VALUES
-                (1, '2026-01-01T00:00:00Z'),
-                (2, '2026-01-01T00:00:00Z'),
-                (3, '2026-01-01T00:00:00Z'),
-                (4, '2026-01-01T00:00:00Z');
-            CREATE TABLE provider_records (
-                id INTEGER PRIMARY KEY,
-                library_entry_id INTEGER NOT NULL,
-                provider TEXT NOT NULL,
-                provider_id TEXT NOT NULL,
-                canonical_title TEXT NOT NULL,
-                synopsis TEXT,
-                episode_count INTEGER,
-                raw_json TEXT NOT NULL,
-                etag TEXT,
-                last_modified TEXT,
-                fetched_at TEXT NOT NULL
-            );
+            )
+            """
+        )
+        for version in range(1, 5):
+            for statement in _MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations VALUES (?, ?)",
+                (version, "2026-01-01T00:00:00+00:00"),
+            )
+        connection.execute(
+            """
+            INSERT INTO library_entries VALUES (
+                7, 'Okinawa', 'Okinawa', 'Okinawa', 1, 1,
+                NULL, NULL, '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00'
+            )
+            """
+        )
+        connection.execute(
+            """
             INSERT INTO provider_records VALUES (
                 1, 7, 'jikan', '55842', 'Okinawa', NULL, 12, '{}',
                 '"legacy"', NULL, '2026-07-25T00:00:00+00:00'
-            );
+            )
             """
         )
+        connection.commit()
         connection.close()
 
         migrated = CatalogueRepository(path)
-        self.assertEqual(migrated.schema_version, 5)
+        self.assertEqual(migrated.schema_version, LATEST_SCHEMA_VERSION)
         migrated.close()
         verification = sqlite3.connect(path)
         verification.row_factory = sqlite3.Row

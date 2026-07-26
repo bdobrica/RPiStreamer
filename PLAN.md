@@ -17,7 +17,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | Step | Increment | Status | Completion evidence |
 |---:|---|---|---|
 | 0 | Contract, fixtures, and architecture decision | Done | Frozen contract, ADR 0008, threat model, three sanitized fixture families, and 118 tests pass |
-| 1 | Multi-work SQLite model and migration | Pending | Existing schema-v5 databases migrate without losing metadata or page identity |
+| 1 | Multi-work SQLite model and migration | Done | Schema 6 migration preserves provider graphs/IDs, adds constrained associations and mappings, and 122 tests pass |
 | 2 | Sidecar work rules and exact media overrides | Pending | Backward-compatible parser applies ranges, seasons, globs, and exact mappings |
 | 3 | Tenrai relation discovery and candidate cache | Pending | Bounded verified candidate graph works online and from cache |
 | 4 | Deterministic file-to-work mapping | Pending | MF Ghost and Tsukimichi map without model calls where rules or filenames suffice |
@@ -313,7 +313,7 @@ environment-dependent tests skip.
 
 ## Step 1 — Multi-work SQLite model and migration
 
-**Status: Pending**
+**Status: Done**
 
 Normalize the current one-provider-record-per-folder relationship before
 introducing mapping behavior.
@@ -361,6 +361,12 @@ introducing mapping behavior.
 
 **Documentation/commit:** update the README data-model table and backup warning;
 commit as `feat: add multi-work catalogue schema`.
+
+**Completion:** schema version 6 rebuilds provider metadata as reusable
+provider/ID records, migrates every schema-5 match to a primary association,
+and adds constrained collection-work, file-mapping, and rules-digest storage.
+Compatibility queries keep existing single-title rendering intact. Migration,
+rollback, reopen, sharing, constraint, cascade, and preservation tests pass.
 
 ## Step 2 — Sidecar parser and manual mappings
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Final
 
-LATEST_SCHEMA_VERSION: Final = 5
+LATEST_SCHEMA_VERSION: Final = 6
 BUSY_TIMEOUT_MS: Final = 5000
 
 
@@ -57,7 +57,6 @@ class MediaFile:
 @dataclass(frozen=True, slots=True)
 class ProviderRecord:
     id: int
-    library_entry_id: int
     provider: str
     provider_id: str
     canonical_title: str
@@ -68,6 +67,38 @@ class ProviderRecord:
     last_modified: str | None
     validator_source: str
     fetched_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryEntryWork:
+    id: int
+    library_entry_id: int
+    provider_record_id: int
+    is_primary: bool
+    local_name: str
+    label: str | None
+    display_order: int
+    source: str
+    confidence: float | None
+    first_verified_at: datetime
+    last_verified_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MediaWorkMapping:
+    media_file_id: int
+    library_entry_work_id: int
+    kind: str
+    episode_start: int | None
+    episode_end: int | None
+    label: str | None
+    source: str
+    confidence: float | None
+    model: str | None
+    schema_version: str | None
+    input_digest: str
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +343,281 @@ _MIGRATIONS: Final[dict[int, tuple[str, ...]]] = {
         ADD COLUMN validator_source TEXT NOT NULL DEFAULT 'jikan'
         """,
     ),
+    6: (
+        """
+        ALTER TABLE provider_records RENAME TO provider_records_v5
+        """,
+        """
+        DROP INDEX provider_records_fetched_idx
+        """,
+        """
+        CREATE TABLE provider_records (
+            id INTEGER PRIMARY KEY,
+            provider TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            canonical_title TEXT NOT NULL CHECK (length(canonical_title) > 0),
+            synopsis TEXT,
+            episode_count INTEGER CHECK (
+                episode_count IS NULL OR episode_count >= 0
+            ),
+            raw_json TEXT NOT NULL,
+            etag TEXT,
+            last_modified TEXT,
+            fetched_at TEXT NOT NULL,
+            validator_source TEXT NOT NULL,
+            UNIQUE (provider, provider_id)
+        )
+        """,
+        """
+        INSERT INTO provider_records(
+            id, provider, provider_id, canonical_title, synopsis,
+            episode_count, raw_json, etag, last_modified, fetched_at,
+            validator_source
+        )
+        SELECT
+            id, provider, provider_id, canonical_title, synopsis,
+            episode_count, raw_json, etag, last_modified, fetched_at,
+            validator_source
+        FROM provider_records_v5
+        """,
+        """
+        CREATE INDEX provider_records_fetched_idx
+        ON provider_records(provider, fetched_at)
+        """,
+        """
+        CREATE TABLE library_entry_works (
+            id INTEGER PRIMARY KEY,
+            library_entry_id INTEGER NOT NULL
+                REFERENCES library_entries(id) ON DELETE CASCADE,
+            provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            is_primary INTEGER NOT NULL DEFAULT 0
+                CHECK (is_primary IN (0, 1)),
+            local_name TEXT NOT NULL CHECK (length(local_name) > 0),
+            label TEXT CHECK (label IS NULL OR length(label) > 0),
+            display_order INTEGER NOT NULL DEFAULT 0
+                CHECK (display_order >= 0),
+            source TEXT NOT NULL CHECK (
+                source IN ('matched', 'manual', 'relation', 'model')
+            ),
+            confidence REAL CHECK (
+                confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
+            ),
+            first_verified_at TEXT NOT NULL,
+            last_verified_at TEXT NOT NULL,
+            UNIQUE (library_entry_id, provider_record_id),
+            UNIQUE (library_entry_id, local_name)
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX library_entry_works_primary_idx
+        ON library_entry_works(library_entry_id)
+        WHERE is_primary = 1
+        """,
+        """
+        CREATE INDEX library_entry_works_order_idx
+        ON library_entry_works(library_entry_id, display_order, id)
+        """,
+        """
+        INSERT INTO library_entry_works(
+            library_entry_id, provider_record_id, is_primary, local_name,
+            label, display_order, source, confidence,
+            first_verified_at, last_verified_at
+        )
+        SELECT
+            old.library_entry_id, old.id, 1, 'primary', NULL, 0,
+            CASE
+                WHEN entries.pinned_provider = old.provider
+                 AND entries.pinned_provider_id = old.provider_id
+                THEN 'manual'
+                ELSE 'matched'
+            END,
+            NULL, old.fetched_at, old.fetched_at
+        FROM provider_records_v5 AS old
+        JOIN library_entries AS entries ON entries.id = old.library_entry_id
+        """,
+        """
+        ALTER TABLE aliases RENAME TO aliases_v5
+        """,
+        """
+        CREATE TABLE aliases (
+            id INTEGER PRIMARY KEY,
+            provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            alias_type TEXT NOT NULL,
+            title TEXT NOT NULL CHECK (length(title) > 0),
+            UNIQUE (provider_record_id, alias_type, title)
+        )
+        """,
+        """
+        INSERT INTO aliases SELECT * FROM aliases_v5
+        """,
+        """
+        DROP TABLE aliases_v5
+        """,
+        """
+        ALTER TABLE provider_record_genres RENAME TO provider_record_genres_v5
+        """,
+        """
+        CREATE TABLE provider_record_genres (
+            provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            genre_id INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+            PRIMARY KEY (provider_record_id, genre_id)
+        ) WITHOUT ROWID
+        """,
+        """
+        INSERT INTO provider_record_genres SELECT * FROM provider_record_genres_v5
+        """,
+        """
+        DROP TABLE provider_record_genres_v5
+        """,
+        """
+        ALTER TABLE relations RENAME TO relations_v5
+        """,
+        """
+        CREATE TABLE relations (
+            id INTEGER PRIMARY KEY,
+            source_provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            relation_type TEXT NOT NULL,
+            target_provider TEXT NOT NULL,
+            target_provider_id TEXT NOT NULL,
+            target_title TEXT NOT NULL,
+            UNIQUE (
+                source_provider_record_id,
+                relation_type,
+                target_provider,
+                target_provider_id
+            )
+        )
+        """,
+        """
+        INSERT INTO relations SELECT * FROM relations_v5
+        """,
+        """
+        DROP TABLE relations_v5
+        """,
+        """
+        ALTER TABLE artwork RENAME TO artwork_v5
+        """,
+        """
+        CREATE TABLE artwork (
+            id INTEGER PRIMARY KEY,
+            provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            relative_path TEXT,
+            mime_type TEXT,
+            size_bytes INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
+            etag TEXT,
+            last_modified TEXT,
+            fetched_at TEXT,
+            UNIQUE (provider_record_id, kind)
+        )
+        """,
+        """
+        INSERT INTO artwork SELECT * FROM artwork_v5
+        """,
+        """
+        DROP TABLE artwork_v5
+        """,
+        """
+        ALTER TABLE provider_episodes RENAME TO provider_episodes_v5
+        """,
+        """
+        CREATE TABLE provider_episodes (
+            provider_record_id INTEGER NOT NULL
+                REFERENCES provider_records(id) ON DELETE CASCADE,
+            episode_number INTEGER NOT NULL CHECK (episode_number > 0),
+            title TEXT,
+            aired_at TEXT,
+            filler INTEGER NOT NULL DEFAULT 0 CHECK (filler IN (0, 1)),
+            recap INTEGER NOT NULL DEFAULT 0 CHECK (recap IN (0, 1)),
+            PRIMARY KEY (provider_record_id, episode_number)
+        )
+        """,
+        """
+        INSERT INTO provider_episodes SELECT * FROM provider_episodes_v5
+        """,
+        """
+        DROP TABLE provider_episodes_v5
+        """,
+        """
+        DROP TABLE provider_records_v5
+        """,
+        """
+        CREATE TABLE media_work_mappings (
+            media_file_id INTEGER PRIMARY KEY
+                REFERENCES media_files(id) ON DELETE CASCADE,
+            library_entry_work_id INTEGER NOT NULL
+                REFERENCES library_entry_works(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (
+                kind IN ('episode', 'special', 'ova', 'ona', 'movie', 'recap', 'other')
+            ),
+            episode_start INTEGER CHECK (
+                episode_start IS NULL OR episode_start > 0
+            ),
+            episode_end INTEGER CHECK (
+                episode_end IS NULL OR episode_end > 0
+            ),
+            label TEXT CHECK (label IS NULL OR length(label) > 0),
+            source TEXT NOT NULL CHECK (
+                source IN (
+                    'manual_exact', 'manual_rule', 'deterministic', 'model'
+                )
+            ),
+            confidence REAL CHECK (
+                confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
+            ),
+            model TEXT,
+            schema_version TEXT,
+            input_digest TEXT NOT NULL CHECK (length(input_digest) > 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (
+                (episode_start IS NULL AND episode_end IS NULL)
+                OR
+                (
+                    episode_start IS NOT NULL
+                    AND episode_end IS NOT NULL
+                    AND episode_end >= episode_start
+                )
+            ),
+            CHECK (
+                (
+                    source = 'model'
+                    AND confidence IS NOT NULL
+                    AND model IS NOT NULL AND length(model) > 0
+                    AND schema_version IS NOT NULL
+                    AND length(schema_version) > 0
+                )
+                OR
+                (
+                    source != 'model'
+                    AND model IS NULL
+                    AND schema_version IS NULL
+                )
+            )
+        )
+        """,
+        """
+        CREATE INDEX media_work_mappings_work_idx
+        ON media_work_mappings(library_entry_work_id, episode_start, media_file_id)
+        """,
+        """
+        CREATE TABLE library_entry_mapping_state (
+            library_entry_id INTEGER PRIMARY KEY
+                REFERENCES library_entries(id) ON DELETE CASCADE,
+            rules_digest TEXT NOT NULL CHECK (length(rules_digest) > 0),
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        PRAGMA foreign_key_check
+        """,
+    ),
 }
 
 
@@ -400,7 +706,18 @@ class CatalogueRepository:
                 if statements is None:
                     raise DatabaseError(f"missing database migration {version}")
                 for statement in statements:
-                    self._connection.execute(statement)
+                    cursor = self._connection.execute(statement)
+                    if (
+                        statement.lstrip()
+                        .upper()
+                        .startswith("PRAGMA FOREIGN_KEY_CHECK")
+                    ):
+                        violation = cursor.fetchone()
+                        if violation is not None:
+                            raise DatabaseError(
+                                "foreign-key violation after migration "
+                                f"{version}: {tuple(violation)}"
+                            )
                 self._connection.execute(
                     """
                     INSERT INTO schema_migrations(version, applied_at)
@@ -744,10 +1061,12 @@ class CatalogueRepository:
             separators=(",", ":"),
             sort_keys=True,
         )
+        cleaned_provider = _required_text(provider, "provider")
+        cleaned_provider_id = _required_text(provider_id, "provider_id")
+        timestamp = _utc_text(fetched_at)
         values = (
-            library_entry_id,
-            _required_text(provider, "provider"),
-            _required_text(provider_id, "provider_id"),
+            cleaned_provider,
+            cleaned_provider_id,
             _required_text(canonical_title, "canonical_title"),
             synopsis,
             episode_count,
@@ -755,19 +1074,18 @@ class CatalogueRepository:
             etag,
             last_modified,
             _required_text(validator_source, "validator_source"),
-            _utc_text(fetched_at),
+            timestamp,
         )
         with self.transaction():
             self._connection.execute(
                 """
                 INSERT INTO provider_records(
-                    library_entry_id, provider, provider_id, canonical_title,
+                    provider, provider_id, canonical_title,
                     synopsis, episode_count, raw_json, etag, last_modified,
                     validator_source, fetched_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(library_entry_id, provider) DO UPDATE SET
-                    provider_id = excluded.provider_id,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, provider_id) DO UPDATE SET
                     canonical_title = excluded.canonical_title,
                     synopsis = excluded.synopsis,
                     episode_count = excluded.episode_count,
@@ -779,7 +1097,39 @@ class CatalogueRepository:
                 """,
                 values,
             )
-        record = self.get_provider_record(library_entry_id, provider)
+            record = self.get_provider_record_by_provider_id(
+                cleaned_provider, cleaned_provider_id
+            )
+            if record is None:
+                raise DatabaseError("provider record disappeared after upsert")
+            current = self.get_primary_library_entry_work(library_entry_id)
+            if current is not None and current.provider_record_id != record.id:
+                self._connection.execute(
+                    """
+                    DELETE FROM library_entry_works
+                    WHERE library_entry_id = ? AND is_primary = 1
+                    """,
+                    (library_entry_id,),
+                )
+            source = self._association_source(
+                library_entry_id, cleaned_provider, cleaned_provider_id
+            )
+            self._connection.execute(
+                """
+                INSERT INTO library_entry_works(
+                    library_entry_id, provider_record_id, is_primary,
+                    local_name, label, display_order, source, confidence,
+                    first_verified_at, last_verified_at
+                ) VALUES (?, ?, 1, 'primary', NULL, 0, ?, NULL, ?, ?)
+                ON CONFLICT(library_entry_id, provider_record_id) DO UPDATE SET
+                    is_primary = 1,
+                    local_name = 'primary',
+                    source = excluded.source,
+                    last_verified_at = excluded.last_verified_at
+                """,
+                (library_entry_id, record.id, source, timestamp, timestamp),
+            )
+        record = self.get_provider_record(library_entry_id, cleaned_provider)
         if record is None:
             raise DatabaseError("provider record disappeared after upsert")
         return record
@@ -789,12 +1139,242 @@ class CatalogueRepository:
     ) -> ProviderRecord | None:
         row = self._connection.execute(
             """
-            SELECT * FROM provider_records
-            WHERE library_entry_id = ? AND provider = ?
+            SELECT records.*
+            FROM library_entry_works AS works
+            JOIN provider_records AS records
+              ON records.id = works.provider_record_id
+            WHERE works.library_entry_id = ?
+              AND records.provider = ?
+              AND works.is_primary = 1
             """,
             (library_entry_id, provider),
         ).fetchone()
         return None if row is None else _provider_record(row)
+
+    def get_provider_record_by_provider_id(
+        self, provider: str, provider_id: str
+    ) -> ProviderRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM provider_records
+            WHERE provider = ? AND provider_id = ?
+            """,
+            (provider, provider_id),
+        ).fetchone()
+        return None if row is None else _provider_record(row)
+
+    def list_library_entry_works(self, library_entry_id: int) -> list[LibraryEntryWork]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM library_entry_works
+            WHERE library_entry_id = ?
+            ORDER BY display_order, id
+            """,
+            (library_entry_id,),
+        ).fetchall()
+        return [_library_entry_work(row) for row in rows]
+
+    def get_primary_library_entry_work(
+        self, library_entry_id: int
+    ) -> LibraryEntryWork | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM library_entry_works
+            WHERE library_entry_id = ? AND is_primary = 1
+            """,
+            (library_entry_id,),
+        ).fetchone()
+        return None if row is None else _library_entry_work(row)
+
+    def associate_library_entry_work(
+        self,
+        *,
+        library_entry_id: int,
+        provider_record_id: int,
+        local_name: str,
+        source: str,
+        verified_at: datetime,
+        is_primary: bool = False,
+        label: str | None = None,
+        display_order: int = 0,
+        confidence: float | None = None,
+    ) -> LibraryEntryWork:
+        if display_order < 0:
+            raise ValueError("display_order must be non-negative")
+        if confidence is not None and not 0 <= confidence <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+        timestamp = _utc_text(verified_at)
+        with self.transaction():
+            if is_primary:
+                self._connection.execute(
+                    """
+                    UPDATE library_entry_works SET is_primary = 0
+                    WHERE library_entry_id = ? AND is_primary = 1
+                      AND provider_record_id != ?
+                    """,
+                    (library_entry_id, provider_record_id),
+                )
+            self._connection.execute(
+                """
+                INSERT INTO library_entry_works(
+                    library_entry_id, provider_record_id, is_primary,
+                    local_name, label, display_order, source, confidence,
+                    first_verified_at, last_verified_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(library_entry_id, provider_record_id) DO UPDATE SET
+                    is_primary = excluded.is_primary,
+                    local_name = excluded.local_name,
+                    label = excluded.label,
+                    display_order = excluded.display_order,
+                    source = excluded.source,
+                    confidence = excluded.confidence,
+                    last_verified_at = excluded.last_verified_at
+                """,
+                (
+                    library_entry_id,
+                    provider_record_id,
+                    int(is_primary),
+                    _required_text(local_name, "local_name"),
+                    None if label is None else _required_text(label, "label"),
+                    display_order,
+                    _required_text(source, "source"),
+                    confidence,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        work = next(
+            (
+                item
+                for item in self.list_library_entry_works(library_entry_id)
+                if item.provider_record_id == provider_record_id
+            ),
+            None,
+        )
+        if work is None:
+            raise DatabaseError("library work disappeared after upsert")
+        return work
+
+    def set_media_work_mapping(
+        self,
+        *,
+        media_file_id: int,
+        library_entry_work_id: int,
+        kind: str,
+        source: str,
+        input_digest: str,
+        mapped_at: datetime,
+        episode_start: int | None = None,
+        episode_end: int | None = None,
+        label: str | None = None,
+        confidence: float | None = None,
+        model: str | None = None,
+        schema_version: str | None = None,
+    ) -> MediaWorkMapping:
+        timestamp = _utc_text(mapped_at)
+        with self.transaction():
+            ownership = self._connection.execute(
+                """
+                SELECT media.library_entry_id AS media_entry_id,
+                       works.library_entry_id AS work_entry_id
+                FROM media_files AS media
+                JOIN library_entry_works AS works ON works.id = ?
+                WHERE media.id = ?
+                """,
+                (library_entry_work_id, media_file_id),
+            ).fetchone()
+            if ownership is None:
+                raise ValueError("media file or library work does not exist")
+            if ownership["media_entry_id"] != ownership["work_entry_id"]:
+                raise ValueError(
+                    "media file and library work belong to different entries"
+                )
+            self._connection.execute(
+                """
+                INSERT INTO media_work_mappings(
+                    media_file_id, library_entry_work_id, kind,
+                    episode_start, episode_end, label, source, confidence,
+                    model, schema_version, input_digest, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(media_file_id) DO UPDATE SET
+                    library_entry_work_id = excluded.library_entry_work_id,
+                    kind = excluded.kind,
+                    episode_start = excluded.episode_start,
+                    episode_end = excluded.episode_end,
+                    label = excluded.label,
+                    source = excluded.source,
+                    confidence = excluded.confidence,
+                    model = excluded.model,
+                    schema_version = excluded.schema_version,
+                    input_digest = excluded.input_digest,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    media_file_id,
+                    library_entry_work_id,
+                    _required_text(kind, "kind"),
+                    episode_start,
+                    episode_end,
+                    None if label is None else _required_text(label, "label"),
+                    _required_text(source, "source"),
+                    confidence,
+                    model,
+                    schema_version,
+                    _required_text(input_digest, "input_digest"),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        mapping = self.get_media_work_mapping(media_file_id)
+        if mapping is None:
+            raise DatabaseError("media mapping disappeared after upsert")
+        return mapping
+
+    def get_media_work_mapping(self, media_file_id: int) -> MediaWorkMapping | None:
+        row = self._connection.execute(
+            "SELECT * FROM media_work_mappings WHERE media_file_id = ?",
+            (media_file_id,),
+        ).fetchone()
+        return None if row is None else _media_work_mapping(row)
+
+    def set_mapping_rules_digest(
+        self, library_entry_id: int, rules_digest: str, *, updated_at: datetime
+    ) -> None:
+        with self.transaction():
+            self._connection.execute(
+                """
+                INSERT INTO library_entry_mapping_state(
+                    library_entry_id, rules_digest, updated_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(library_entry_id) DO UPDATE SET
+                    rules_digest = excluded.rules_digest,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    library_entry_id,
+                    _required_text(rules_digest, "rules_digest"),
+                    _utc_text(updated_at),
+                ),
+            )
+
+    def _association_source(
+        self, library_entry_id: int, provider: str, provider_id: str
+    ) -> str:
+        row = self._connection.execute(
+            """
+            SELECT pinned_provider, pinned_provider_id
+            FROM library_entries WHERE id = ?
+            """,
+            (library_entry_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("library entry does not exist")
+        return (
+            "manual"
+            if row["pinned_provider"] == provider
+            and row["pinned_provider_id"] == provider_id
+            else "matched"
+        )
 
     def list_stale_provider_records(
         self, provider: str, stale_before: datetime
@@ -1235,7 +1815,6 @@ def _provider_record(row: sqlite3.Row) -> ProviderRecord:
     assert fetched_at is not None
     return ProviderRecord(
         id=int(row["id"]),
-        library_entry_id=int(row["library_entry_id"]),
         provider=str(row["provider"]),
         provider_id=str(row["provider_id"]),
         canonical_title=str(row["canonical_title"]),
@@ -1250,6 +1829,50 @@ def _provider_record(row: sqlite3.Row) -> ProviderRecord:
         ),
         validator_source=str(row["validator_source"]),
         fetched_at=fetched_at,
+    )
+
+
+def _library_entry_work(row: sqlite3.Row) -> LibraryEntryWork:
+    first_verified = _datetime(str(row["first_verified_at"]))
+    last_verified = _datetime(str(row["last_verified_at"]))
+    assert first_verified is not None and last_verified is not None
+    return LibraryEntryWork(
+        id=int(row["id"]),
+        library_entry_id=int(row["library_entry_id"]),
+        provider_record_id=int(row["provider_record_id"]),
+        is_primary=bool(row["is_primary"]),
+        local_name=str(row["local_name"]),
+        label=None if row["label"] is None else str(row["label"]),
+        display_order=int(row["display_order"]),
+        source=str(row["source"]),
+        confidence=None if row["confidence"] is None else float(row["confidence"]),
+        first_verified_at=first_verified,
+        last_verified_at=last_verified,
+    )
+
+
+def _media_work_mapping(row: sqlite3.Row) -> MediaWorkMapping:
+    created_at = _datetime(str(row["created_at"]))
+    updated_at = _datetime(str(row["updated_at"]))
+    assert created_at is not None and updated_at is not None
+    return MediaWorkMapping(
+        media_file_id=int(row["media_file_id"]),
+        library_entry_work_id=int(row["library_entry_work_id"]),
+        kind=str(row["kind"]),
+        episode_start=(
+            None if row["episode_start"] is None else int(row["episode_start"])
+        ),
+        episode_end=None if row["episode_end"] is None else int(row["episode_end"]),
+        label=None if row["label"] is None else str(row["label"]),
+        source=str(row["source"]),
+        confidence=None if row["confidence"] is None else float(row["confidence"]),
+        model=None if row["model"] is None else str(row["model"]),
+        schema_version=(
+            None if row["schema_version"] is None else str(row["schema_version"])
+        ),
+        input_digest=str(row["input_digest"]),
+        created_at=created_at,
+        updated_at=updated_at,
     )
 
 

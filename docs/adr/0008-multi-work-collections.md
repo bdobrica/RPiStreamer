@@ -63,5 +63,19 @@ provenance. Relation and inference inputs require bounded caches and
 invalidation. Grouped rendering and migration add complexity, but local
 playback remains independent of provider or model availability.
 
+Schema version 6 implements that persistence boundary. `provider_records` are
+global to the provider/MAL identity; `library_entry_works` owns collection
+association and verification provenance; and `media_work_mappings` owns the
+optional file classification and mapping provenance. A canonical rules digest
+is stored separately for future invalidation. The schema-5 migration preserves
+provider record IDs and their complete metadata graph, creates one primary
+association per existing match, and intentionally leaves files unmapped for
+the first reconciliation.
+
+Deleting a collection removes only its associations and mappings. It does not
+delete a normalized provider record still referenced by another collection.
+The migration is one transaction and performs a foreign-key integrity check
+before recording completion.
+
 Arbitrary regular expressions, unverified model IDs, unbounded franchise
 graphs, and silent conflict resolution are deliberately excluded.
