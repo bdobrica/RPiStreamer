@@ -3,19 +3,52 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from rpi_streamer.database import CatalogueRepository
+from rpi_streamer.inference import (
+    MAPPING_SCHEMA_VERSION as MODEL_MAPPING_SCHEMA_VERSION,
+)
+from rpi_streamer.inference import (
+    InferenceError,
+    OpenAIInferenceClient,
+)
 from rpi_streamer.mapping import (
     MAPPING_SCHEMA_VERSION,
     map_entry_deterministically,
+    map_entry_with_model,
     parse_local_media_facts,
 )
 
 NOW = datetime(2026, 7, 26, 18, 0, tzinfo=UTC)
 FIXTURES = Path(__file__).parent / "fixtures" / "multi_work"
+
+
+def _model_response(mappings: list[dict[str, object]]) -> bytes:
+    return json.dumps(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps(
+                                {
+                                    "schema_version": MODEL_MAPPING_SCHEMA_VERSION,
+                                    "mappings": mappings,
+                                }
+                            ),
+                        }
+                    ],
+                }
+            ],
+        }
+    ).encode()
 
 
 class FilenameFactsTestCase(unittest.TestCase):
@@ -260,6 +293,186 @@ class DeterministicMappingTestCase(unittest.TestCase):
         )
         self.assertTrue(all(item.outcome == "unmapped" for item in result.decisions))
         self.assertIsNone(self.repository.get_media_work_mapping(media.id))
+
+    def test_model_maps_ambiguous_tie_in_from_verified_candidates_and_caches(
+        self,
+    ) -> None:
+        entry_id, _ = self._fixture("tie_ins")
+        map_entry_deterministically(
+            self.repository, entry_id, mapped_at=NOW, rules_digest="rules"
+        )
+        calls = 0
+
+        def transport(request: urllib.request.Request, _timeout: float) -> bytes:
+            nonlocal calls
+            calls += 1
+            body = json.loads(request.data.decode())  # type: ignore[union-attr]
+            submitted = json.loads(body["input"])["files"]
+            mappings = []
+            for facts in submitted:
+                is_bonus = facts["filename"] == "Fixture_Show_Bonus.mp4"
+                accepted = is_bonus and calls == 1
+                mappings.append(
+                    {
+                        "filename": facts["filename"],
+                        "mal_id": "992003" if accepted else None,
+                        "kind": "ova" if accepted else "unknown",
+                        "episode_start": 1 if accepted else None,
+                        "episode_end": 1 if accepted else None,
+                        "confidence": 0.96 if accepted else 0.4,
+                        "reason": "bonus OVA" if accepted else "uncertain",
+                    }
+                )
+            return _model_response(mappings)
+
+        inference = OpenAIInferenceClient("key", transport=transport)
+        first = map_entry_with_model(
+            self.repository,
+            entry_id,
+            inference,
+            mapped_at=NOW,
+            rules_digest="rules",
+            cache_ttl=86400,
+        )
+        bonus = next(
+            media
+            for media in self.repository.list_media_files(entry_id)
+            if media.filename == "Fixture_Show_Bonus.mp4"
+        )
+        mapping = self.repository.get_media_work_mapping(bonus.id)
+        assert mapping is not None
+        record = self.repository.get_provider_record_for_work(
+            mapping.library_entry_work_id
+        )
+        assert record is not None
+
+        self.assertEqual(first.applied, 1)
+        self.assertEqual((mapping.source, record.provider_id), ("model", "992003"))
+        self.assertEqual(mapping.confidence, 0.96)
+        self.assertEqual(calls, 1)
+
+        cached_client = OpenAIInferenceClient(
+            "key",
+            transport=lambda _request, _timeout: self.fail("unexpected model call"),
+        )
+        second = map_entry_with_model(
+            self.repository,
+            entry_id,
+            cached_client,
+            mapped_at=NOW,
+            rules_digest="rules",
+            cache_ttl=86400,
+        )
+        self.assertTrue(second.cache_hit)
+        self.assertEqual(cached_client.calls, 0)
+
+        invalidated = map_entry_with_model(
+            self.repository,
+            entry_id,
+            inference,
+            mapped_at=NOW,
+            rules_digest="changed-rules",
+            cache_ttl=86400,
+        )
+        self.assertFalse(invalidated.cache_hit)
+        self.assertEqual(invalidated.applied, 0)
+        self.assertEqual(calls, 2)
+        self.assertIsNone(self.repository.get_media_work_mapping(bonus.id))
+
+    def test_model_rejects_provider_overflow_and_low_confidence(self) -> None:
+        entry_id, _ = self._fixture("tie_ins")
+        map_entry_deterministically(
+            self.repository, entry_id, mapped_at=NOW, rules_digest="rules"
+        )
+
+        def transport(request: urllib.request.Request, _timeout: float) -> bytes:
+            body = json.loads(request.data.decode())  # type: ignore[union-attr]
+            submitted = json.loads(body["input"])["files"]
+            return _model_response(
+                [
+                    {
+                        "filename": facts["filename"],
+                        "mal_id": "992003",
+                        "kind": "episode",
+                        "episode_start": 2,
+                        "episode_end": 2,
+                        "confidence": (
+                            0.95
+                            if facts["filename"] == "Fixture_Show_Bonus.mp4"
+                            else 0.5
+                        ),
+                        "reason": "candidate",
+                    }
+                    for facts in submitted
+                ]
+            )
+
+        result = map_entry_with_model(
+            self.repository,
+            entry_id,
+            OpenAIInferenceClient("key", transport=transport),
+            mapped_at=NOW,
+            rules_digest="rules",
+            cache_ttl=86400,
+        )
+
+        self.assertEqual(result.applied, 0)
+        self.assertIn("exceeds verified provider count", result.errors[0])
+
+    def test_deterministic_fixture_spends_no_model_call(self) -> None:
+        entry_id, _ = self._fixture("mf_ghost_continuous")
+        map_entry_deterministically(
+            self.repository, entry_id, mapped_at=NOW, rules_digest="rules"
+        )
+        inference = OpenAIInferenceClient(
+            "key",
+            transport=lambda _request, _timeout: self.fail("unexpected model call"),
+        )
+
+        result = map_entry_with_model(
+            self.repository,
+            entry_id,
+            inference,
+            mapped_at=NOW,
+            rules_digest="rules",
+            cache_ttl=86400,
+        )
+
+        self.assertEqual(result.applied, 0)
+        self.assertEqual(inference.calls, 0)
+
+    def test_transport_failure_enters_short_cooldown(self) -> None:
+        entry_id, _ = self._fixture("tie_ins")
+        map_entry_deterministically(
+            self.repository, entry_id, mapped_at=NOW, rules_digest="rules"
+        )
+        calls = 0
+
+        def transport(_request: urllib.request.Request, _timeout: float) -> bytes:
+            nonlocal calls
+            calls += 1
+            raise TimeoutError("timed out")
+
+        with self.assertRaises(InferenceError):
+            map_entry_with_model(
+                self.repository,
+                entry_id,
+                OpenAIInferenceClient("key", transport=transport),
+                mapped_at=NOW,
+                rules_digest="rules",
+                cache_ttl=86400,
+            )
+        second = map_entry_with_model(
+            self.repository,
+            entry_id,
+            OpenAIInferenceClient("key", transport=transport),
+            mapped_at=NOW,
+            rules_digest="rules",
+            cache_ttl=86400,
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertIn("cooldown", second.errors[0])
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | 2 | Sidecar work rules and exact media overrides | Done | Bounded parser, cached/live verification, digest reconciliation, manual precedence, and 135 tests pass |
 | 3 | Tenrai relation discovery and candidate cache | Done | Depth-3/12-work verified graph, suspicion gate, offline cache, provenance, and 143 tests pass |
 | 4 | Deterministic file-to-work mapping | Done | Independent filename facts, unique verified boundaries, precedence/invalidation, tie-in coverage, and 151 tests pass |
-| 5 | Structured LLM-assisted mapping | Pending | Unresolved files receive validated, cached candidate mappings within the call budget |
+| 5 | Structured LLM-assisted mapping | Done | Separate strict schema, verified-ID enum, validation/precedence, stable cache/cooldown, shared budget, and 158 tests pass |
 | 6 | Grouped catalogue rendering | Pending | One player groups seasons and tie-ins while retaining no-JS playback |
 | 7 | Operator controls, observability, and documentation | Pending | Mapping inspection/refresh commands and complete README guidance are available |
 | 8 | End-to-end and Raspberry Pi acceptance | Pending | Upgrade, cold/cached scans, manual correction, playback, and resource evidence pass |
@@ -525,7 +525,7 @@ the conservative failure paths.
 
 ## Step 5 — Structured LLM-assisted mapping
 
-**Status: Pending**
+**Status: Done**
 
 Extend the existing optional OpenAI client only after deterministic mapping
 has left unresolved files.
@@ -582,6 +582,20 @@ has left unresolved files.
 
 **Documentation/commit:** update privacy, cost, cache, and failure guidance and
 ADR 0005; commit as `feat: infer multi-work media mappings`.
+
+**Implemented:** the existing client now exposes a separate versioned
+multi-work Structured Outputs contract without changing v1 title/episode
+caches. The final mapping pass submits only unresolved basenames/facts and
+bounded verified candidate summaries, dynamically constrains MAL IDs, requires
+a complete response, and revalidates identity, range, count, confidence, and
+precedence before storing model provenance. Accepted and `null` results share
+a privacy-preserving cache; changed facts/candidates/rules invalidate it,
+transient failures use a short cooldown, and the existing per-scan budget is
+shared. Cached chunks allow deterministic overflow progress while each
+collection spends at most one new mapping call per scan. Fake-transport tests
+cover strict/minimal requests, privacy boundaries, malformed or invented
+output, bounds, low confidence, shared budget, cache/invalidation/cooldown,
+ambiguous tie-ins, and zero-call deterministic behavior.
 
 ## Step 6 — Grouped static catalogue
 

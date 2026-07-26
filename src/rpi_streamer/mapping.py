@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final, Literal
 
@@ -17,9 +17,22 @@ from rpi_streamer.database import (
     MediaFile,
     ProviderRecord,
 )
+from rpi_streamer.inference import (
+    MAPPING_SCHEMA_VERSION as MODEL_MAPPING_SCHEMA_VERSION,
+)
+from rpi_streamer.inference import (
+    MAX_FILENAMES,
+    InferenceError,
+    MultiWorkInferenceResult,
+    OpenAIInferenceClient,
+    mapping_result_data,
+    mapping_result_from_data,
+)
 
 PARSER_VERSION: Final = "1"
 MAPPING_SCHEMA_VERSION: Final = "1"
+MODEL_CONFIDENCE_THRESHOLD: Final = 0.85
+MODEL_FAILURE_COOLDOWN_SECONDS: Final = 300
 MappingOutcome = Literal[
     "mapped", "ambiguous", "invalid", "pending provider", "unmapped"
 ]
@@ -87,6 +100,13 @@ class DeterministicMappingResult:
     @property
     def mapped(self) -> int:
         return sum(item.outcome == "mapped" for item in self.decisions)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelMappingResult:
+    applied: int
+    cache_hit: bool
+    errors: tuple[str, ...]
 
 
 def parse_local_media_facts(filename: str) -> LocalMediaFacts:
@@ -240,6 +260,293 @@ def map_entry_deterministically(
         final.append(decision)
     repository.remove_stale_deterministic_mappings(library_entry_id, retained)
     return DeterministicMappingResult(tuple(final))
+
+
+def map_entry_with_model(
+    repository: CatalogueRepository,
+    library_entry_id: int,
+    inference: OpenAIInferenceClient,
+    *,
+    mapped_at: datetime,
+    rules_digest: str,
+    cache_ttl: int,
+) -> ModelMappingResult:
+    """Map unresolved files through one bounded, verified-candidate request."""
+
+    entry = repository.get_library_entry_by_id(library_entry_id)
+    if entry is None:
+        return ModelMappingResult(0, False, ("library entry disappeared",))
+    works = _ordered_works(repository, library_entry_id)
+    records = {
+        work.id: repository.get_provider_record_for_work(work.id) for work in works
+    }
+    if not works or any(record is None for record in records.values()):
+        return ModelMappingResult(0, False, ())
+    eligible = []
+    for media in repository.list_media_files(library_entry_id):
+        current = repository.get_media_work_mapping(media.id)
+        if current is None or current.source == "model":
+            eligible.append(media)
+    if not eligible:
+        return ModelMappingResult(0, False, ())
+
+    directory_name = Path(entry.relative_path).name
+    relation_types = _relation_types(repository, works, records)
+    request_candidates, digest_candidates = _model_candidates(
+        works, records, relation_types
+    )
+    applied = 0
+    any_cache_hit = False
+    errors: list[str] = []
+    for offset in range(0, len(eligible), MAX_FILENAMES):
+        batch = eligible[offset : offset + MAX_FILENAMES]
+        request_files = [
+            _model_file(parse_local_media_facts(item.filename)) for item in batch
+        ]
+        key_payload = {
+            "schema": MODEL_MAPPING_SCHEMA_VERSION,
+            "model": inference.model,
+            "collection": entry.title,
+            "directory": directory_name,
+            "files": request_files,
+            "candidates": digest_candidates,
+            "rules_digest": rules_digest,
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                key_payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        cached = repository.get_inference_cache(digest)
+        result: MultiWorkInferenceResult
+        cache_hit = False
+        if cached is not None and cached[1] >= mapped_at - timedelta(seconds=cache_ttl):
+            try:
+                cached_data = json.loads(cached[0])
+            except json.JSONDecodeError:
+                cached_data = None
+            if (
+                isinstance(cached_data, dict)
+                and "error" in cached_data
+                and cached[1]
+                >= mapped_at - timedelta(seconds=MODEL_FAILURE_COOLDOWN_SECONDS)
+            ):
+                return ModelMappingResult(
+                    applied,
+                    any_cache_hit,
+                    ("model mapping is in cooldown after a transient failure",),
+                )
+            try:
+                result = mapping_result_from_data(
+                    cached_data,
+                    [item.filename for item in batch],
+                    [str(item["mal_id"]) for item in request_candidates],
+                )
+            except InferenceError:
+                result = _request_model_mapping(
+                    repository,
+                    inference,
+                    entry.title,
+                    directory_name,
+                    request_files,
+                    request_candidates,
+                    digest,
+                    mapped_at,
+                )
+            else:
+                cache_hit = True
+        else:
+            result = _request_model_mapping(
+                repository,
+                inference,
+                entry.title,
+                directory_name,
+                request_files,
+                request_candidates,
+                digest,
+                mapped_at,
+            )
+        any_cache_hit |= cache_hit
+        batch_applied, batch_errors = _apply_model_result(
+            repository,
+            library_entry_id,
+            result,
+            records,
+            works,
+            digest,
+            inference.model,
+            mapped_at,
+        )
+        applied += batch_applied
+        errors.extend(batch_errors)
+        # At most one paid request per collection per scan. Cached leading
+        # chunks may be skipped so overflow progresses on later scans.
+        if not cache_hit:
+            break
+    return ModelMappingResult(applied, any_cache_hit, tuple(errors))
+
+
+def _request_model_mapping(
+    repository: CatalogueRepository,
+    inference: OpenAIInferenceClient,
+    collection_name: str,
+    directory_name: str,
+    files: Sequence[dict[str, object]],
+    candidates: Sequence[dict[str, object]],
+    digest: str,
+    mapped_at: datetime,
+) -> MultiWorkInferenceResult:
+    try:
+        result = inference.infer_multi_work(
+            collection_name, directory_name, files, candidates
+        )
+    except InferenceError as error:
+        repository.put_inference_cache(
+            digest,
+            model=inference.model,
+            schema_version=MODEL_MAPPING_SCHEMA_VERSION,
+            result={
+                "schema_version": MODEL_MAPPING_SCHEMA_VERSION,
+                "error": str(error),
+            },
+            created_at=mapped_at,
+        )
+        raise
+    repository.put_inference_cache(
+        digest,
+        model=inference.model,
+        schema_version=MODEL_MAPPING_SCHEMA_VERSION,
+        result=mapping_result_data(result),
+        created_at=mapped_at,
+    )
+    return result
+
+
+def _apply_model_result(
+    repository: CatalogueRepository,
+    library_entry_id: int,
+    result: MultiWorkInferenceResult,
+    records: dict[int, ProviderRecord | None],
+    works: Sequence[LibraryEntryWork],
+    digest: str,
+    model: str,
+    mapped_at: datetime,
+) -> tuple[int, tuple[str, ...]]:
+    media_by_name = {
+        media.filename: media for media in repository.list_media_files(library_entry_id)
+    }
+    work_by_provider = {
+        record.provider_id: work
+        for work in works
+        if (record := records[work.id]) is not None
+    }
+    applied = 0
+    errors: list[str] = []
+    for inferred in result.mappings:
+        media = media_by_name[inferred.filename]
+        current = repository.get_media_work_mapping(media.id)
+        if current is not None and current.source != "model":
+            continue
+        if inferred.mal_id is None or inferred.confidence < MODEL_CONFIDENCE_THRESHOLD:
+            if current is not None:
+                repository.remove_media_work_mapping(media.id, source="model")
+            continue
+        work = work_by_provider[inferred.mal_id]
+        record = records[work.id]
+        assert record is not None
+        if (
+            inferred.kind == "episode"
+            and inferred.episode_end is not None
+            and record.episode_count is not None
+            and inferred.episode_end > record.episode_count
+        ):
+            errors.append(
+                f"{inferred.filename}: model episode exceeds verified provider count"
+            )
+            if current is not None:
+                repository.remove_media_work_mapping(media.id, source="model")
+            continue
+        repository.set_media_work_mapping(
+            media_file_id=media.id,
+            library_entry_work_id=work.id,
+            kind=inferred.kind,
+            episode_start=inferred.episode_start,
+            episode_end=inferred.episode_end,
+            source="model",
+            confidence=inferred.confidence,
+            model=model,
+            schema_version=MODEL_MAPPING_SCHEMA_VERSION,
+            input_digest=digest,
+            mapped_at=mapped_at,
+        )
+        applied += 1
+    return applied, tuple(errors)
+
+
+def _model_file(facts: LocalMediaFacts) -> dict[str, object]:
+    return {
+        "filename": facts.filename,
+        "season": facts.season,
+        "episode_start": facts.episode_start,
+        "episode_end": facts.episode_end,
+        "special_kind": facts.special_kind,
+        "explicit_ordinal": facts.explicit_ordinal,
+        "markers": list(facts.markers),
+    }
+
+
+def _model_candidates(
+    works: Sequence[LibraryEntryWork],
+    records: dict[int, ProviderRecord | None],
+    relation_types: dict[str, str],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    request: list[dict[str, object]] = []
+    digest: list[dict[str, object]] = []
+    for order, work in enumerate(works):
+        record = records[work.id]
+        assert record is not None
+        try:
+            raw = json.loads(record.raw_json)
+        except json.JSONDecodeError:
+            raw = {}
+        media_type = raw.get("type") if isinstance(raw, dict) else None
+        item: dict[str, object] = {
+            "mal_id": record.provider_id,
+            "title": record.canonical_title,
+            "media_type": media_type if isinstance(media_type, str) else None,
+            "episode_count": record.episode_count,
+            "relation_type": (
+                "primary"
+                if work.is_primary
+                else relation_types.get(record.provider_id, "related")
+            ),
+            "relation_distance": work.relation_distance,
+            "order": order,
+        }
+        request.append(item)
+        digest.append({**item, "fetched_at": record.fetched_at.isoformat()})
+    return request, digest
+
+
+def _relation_types(
+    repository: CatalogueRepository,
+    works: Sequence[LibraryEntryWork],
+    records: dict[int, ProviderRecord | None],
+) -> dict[str, str]:
+    primary = next((work for work in works if work.is_primary), None)
+    if primary is None:
+        return {}
+    record = records[primary.id]
+    if record is None:
+        return {}
+    return {
+        relation.target_provider_id: relation.relation_type
+        for relation in repository.list_relations(record.id)
+        if relation.target_provider == record.provider
+    }
 
 
 def _decide(

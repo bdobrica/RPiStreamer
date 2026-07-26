@@ -13,7 +13,12 @@ from typing import Final
 
 from rpi_streamer.candidates import discover_related_candidates
 from rpi_streamer.database import CatalogueRepository, ProviderRecord, ScanRun
-from rpi_streamer.mapping import map_entry_deterministically, parse_local_media_facts
+from rpi_streamer.inference import InferenceError, OpenAIInferenceClient
+from rpi_streamer.mapping import (
+    map_entry_deterministically,
+    map_entry_with_model,
+    parse_local_media_facts,
+)
 from rpi_streamer.sidecar import (
     MediaOverride,
     Sidecar,
@@ -244,6 +249,8 @@ def scan_library(
     scanned_at: datetime | None = None,
     enrich: Enricher | None = None,
     verify_work: WorkVerifier | None = None,
+    inference: OpenAIInferenceClient | None = None,
+    inference_cache_ttl: int = 90 * 86400,
 ) -> ScanRun:
     """Discover and reconcile one scan, recording success or partial status."""
 
@@ -318,12 +325,20 @@ def scan_library(
         deterministic_errors = _reconcile_deterministic_mappings(
             repository, discovery.titles, timestamp
         )
+        model_errors = _reconcile_model_mappings(
+            repository,
+            discovery.titles,
+            timestamp,
+            inference=inference,
+            cache_ttl=inference_cache_ttl,
+        )
         issues = (
             *discovery.issues,
             *(ScanIssue("metadata", error) for error in metadata_errors),
             *(ScanIssue("mapping", error) for error in mapping_errors),
             *(ScanIssue("candidates", error) for error in candidate_errors),
             *(ScanIssue("mapping", error) for error in deterministic_errors),
+            *(ScanIssue("mapping", error) for error in model_errors),
         )
         status = "partial" if issues else "success"
         summary = _summary(issues)
@@ -623,6 +638,41 @@ def _reconcile_deterministic_mappings(
                     f"{title.relative_path}: {decision.filename}: "
                     f"{decision.outcome}: {decision.reason}"
                 )
+    return tuple(errors)
+
+
+def _reconcile_model_mappings(
+    repository: CatalogueRepository,
+    titles: Sequence[DiscoveredTitle],
+    timestamp: datetime,
+    *,
+    inference: OpenAIInferenceClient | None,
+    cache_ttl: int,
+) -> tuple[str, ...]:
+    if inference is None:
+        return ()
+    errors: list[str] = []
+    for title in titles:
+        if not title.sidecar_valid:
+            continue
+        entry = repository.get_library_entry(title.relative_path)
+        if entry is None:
+            continue
+        try:
+            result = map_entry_with_model(
+                repository,
+                entry.id,
+                inference,
+                mapped_at=timestamp,
+                rules_digest=title.sidecar.digest,
+                cache_ttl=cache_ttl,
+            )
+        except InferenceError as error:
+            errors.append(f"{title.relative_path}: model mapping: {error}")
+            continue
+        errors.extend(
+            f"{title.relative_path}: model mapping: {error}" for error in result.errors
+        )
     return tuple(errors)
 
 

@@ -157,31 +157,46 @@ number from an arbitrary number embedded in a title.
 
 ### Optional OpenAI fallback
 
-Set `openai_fallback_enabled = true` to use `gpt-5.6-luna` for two bounded
+Set `openai_fallback_enabled = true` to use `gpt-5.6-luna` for three bounded
 jobs. Title normalization runs only after a new title fails the pinned,
 cached, and deterministic provider matching paths. Episode inference runs
 independently whenever filenames have no deterministic episode hint, including
-for pinned and already cached titles. The model returns one strict, versioned
-JSON object containing a normalized search title and conservative episode
-hints. A normalized title is only a new metadata search query: its candidate must
-still pass the existing score and ambiguity checks, and a model-produced MAL
-ID is never accepted. A manual `mal_id` remains authoritative.
+for pinned and already cached titles. Multi-work mapping runs last, only for
+files unresolved by manual and deterministic mapping. Title/episode inference
+uses the original v1 schema; multi-work mapping uses a separate versioned
+schema. A normalized title is only a new metadata search query: its candidate
+must still pass the existing score and ambiguity checks. Multi-work output can
+select only IDs from the request’s Tenrai-verified candidate enum. It cannot
+invent candidates, and a manual `mal_id` remains authoritative.
 
-Only the relative title-directory name and at most 50 unresolved MP4 basenames
-are sent to OpenAI. MP4 contents, absolute paths, sidecars, SQLite data,
-provider metadata, and API keys are not included in prompts. Requests use the
+Only the bounded collection/directory name and at most 50 unresolved MP4
+basenames are sent to OpenAI. A multi-work request also contains parsed
+filename facts and at most 12 verified candidate summaries: MAL ID, preferred
+title, media type, episode count, relation/distance, and order. MP4 contents,
+absolute paths, sidecar text, SQLite rows, API keys, synopsis text, artwork,
+and raw provider payloads are not included in prompts. Requests use the
 [Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
 with `store = false`, strict Structured Outputs, a 2,000-token output ceiling,
 a 128 KiB response ceiling, a 30-second default timeout, and a per-scan call
 budget. Authentication, quota, timeout, refusal, malformed output, and
 provider failures are non-fatal.
 
-Validated results are cached in SQLite by a SHA-256 digest of the bounded
-input, model, and schema version. The default cache lifetime is 90 days, so
-ordinary `SIGHUP` rescans do not repeatedly incur API usage. Filename-derived
-episode hints remain separate and take precedence; a model hint is displayed
-only at confidence `0.8` or higher, while the filename and media URL stay
-authoritative.
+Validated results, including stable `null`/uncertain decisions, are cached in
+SQLite by a SHA-256 digest of the bounded input, candidate versions, sidecar
+rules, model, and schema version. The default cache lifetime is 90 days, so
+ordinary `SIGHUP` rescans do not repeatedly incur API usage. Transient
+failures enter a short cooldown rather than consuming another call
+immediately. The existing per-scan call budget is shared by all inference
+jobs. Oversized collections are handled in deterministic 50-file batches with
+at most one new mapping call per collection per scan.
+
+Filename-derived episode hints remain separate and take precedence; a model
+hint is displayed only at confidence `0.8` or higher. Multi-work mappings
+require confidence `0.85`, exact/complete filenames, a verified candidate ID,
+valid kind/range, and compliance with a known provider episode count. Manual
+and deterministic mappings are never overwritten. Accepted mappings store
+`model`, schema, confidence, and input digest; uncertain or rejected files
+remain playable and unmapped.
 
 An optional UTF-8 `rpi-streamer.ini` in a title directory supports collection
 metadata, multiple verified works, and exact file overrides. The original
@@ -322,6 +337,25 @@ make the scan partial rather than silently attaching the wrong metadata.
 Deterministic rows store their source, parser/mapping schema, and a digest of
 the filename facts, candidates, provider counts, and sidecar rules. A rename,
 count refresh, or rule edit therefore recomputes only affected results.
+
+### Model-assisted multi-work mapping
+
+When the OpenAI fallback is enabled, only files left unresolved by the
+deterministic pass are eligible. One strict Structured Outputs entry is
+required for every submitted basename. The selected MAL ID must be one of the
+verified works supplied with that request or `null`; the model is explicitly
+instructed to prefer `null` over guessing. Application validation repeats the
+candidate, filename, kind, episode-range, confidence, and provider-count
+checks after schema validation.
+
+Cached uncertain results prevent repeated spending on inherently ambiguous
+files. A filename, provider refresh, candidate change, model/schema change, or
+sidecar-rule edit changes the privacy-preserving digest and permits a fresh
+decision. Timeouts, refusals, quota/rate-limit responses, malformed output,
+and invalid mappings are non-fatal: the scan records a bounded issue and the
+file remains playable. Add an exact `[media "..."]` override or `[work "..."]`
+rule whenever an automatic answer is undesirable; it takes effect before any
+later model request.
 
 The conventional `lost+found` directory is ignored only when it is directly
 under `media_root`, preventing an ext filesystem recovery directory from

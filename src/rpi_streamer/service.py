@@ -62,21 +62,21 @@ def run_once(settings: Settings) -> RunSummary:
     with CatalogueRepository(settings.database_path) as repository:
         enrich = None
         verify_work = None
+        inference = (
+            OpenAIInferenceClient(
+                settings.openai_api_key or "",
+                model=settings.openai_model,
+                timeout=settings.openai_timeout,
+                max_calls=settings.openai_max_calls_per_scan,
+            )
+            if settings.openai_fallback_enabled
+            else None
+        )
         if settings.metadata_provider in {"jikan", "tenrai"}:
             provider = (
                 TenraiProvider()
                 if settings.metadata_provider == "tenrai"
                 else JikanProvider()
-            )
-            inference = (
-                OpenAIInferenceClient(
-                    settings.openai_api_key or "",
-                    model=settings.openai_model,
-                    timeout=settings.openai_timeout,
-                    max_calls=settings.openai_max_calls_per_scan,
-                )
-                if settings.openai_fallback_enabled
-                else None
             )
 
             def enrich(
@@ -118,6 +118,8 @@ def run_once(settings: Settings) -> RunSummary:
             settings.media_root,
             enrich=enrich,
             verify_work=verify_work,
+            inference=inference,
+            inference_cache_ttl=settings.openai_cache_ttl,
         )
         if result.summary:
             LOGGER.warning(

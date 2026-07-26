@@ -1655,6 +1655,19 @@ class CatalogueRepository:
         ).fetchone()
         return None if row is None else _media_work_mapping(row)
 
+    def remove_media_work_mapping(self, media_file_id: int, *, source: str) -> bool:
+        """Remove one mapping only if its current provenance matches."""
+
+        with self.transaction():
+            cursor = self._connection.execute(
+                """
+                DELETE FROM media_work_mappings
+                WHERE media_file_id = ? AND source = ?
+                """,
+                (media_file_id, _required_text(source, "source")),
+            )
+        return cursor.rowcount > 0
+
     def remove_stale_manual_mappings(
         self, library_entry_id: int, retained_media_file_ids: set[int]
     ) -> None:
