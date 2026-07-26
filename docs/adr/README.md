@@ -1,9 +1,11 @@
 # Architecture decision records
 
 These records capture decisions that shape RPi Streamer beyond an individual
-implementation change. They replace the completed milestone plan; current
-behavior and operator instructions remain in the project
-[README](../../README.md).
+implementation change. They replace the completed project-wide milestone
+plan; current behavior and operator instructions remain in the project
+[README](../../README.md). The active, feature-specific
+[multi-work mapping plan](../../PLAN.md) will add an ADR when its contract is
+implemented.
 
 | ADR | Decision |
 |---|---|

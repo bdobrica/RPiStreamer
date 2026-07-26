@@ -14,7 +14,8 @@ transcode video, manage users, or expose a public internet service.
 > streaming, scanning, metadata, static generation, native systemd, and
 > Compose implementation is available. Release acceptance on Raspberry Pi
 > arm64 and amd64 Linux remains before the first stable tag. Architectural
-> choices are recorded in [docs/adr](docs/adr/README.md).
+> choices are recorded in [docs/adr](docs/adr/README.md). The active
+> multi-work folder mapping design is tracked in [PLAN.md](PLAN.md).
 
 ## Goals
 
