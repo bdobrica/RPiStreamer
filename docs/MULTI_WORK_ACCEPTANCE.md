@@ -1,9 +1,10 @@
 # Multi-work host acceptance
 
-This runbook completes the hardware-only part of Step 8. Run it on the
-Raspberry Pi after `make check` and `make acceptance` pass in a clean checkout.
-It is intentionally read-only toward MP4 files. Sidecar corrections are the
-only permitted media-tree writes.
+This runbook records the hardware acceptance evidence for multi-work
+collections. Run it on the Raspberry Pi after `make check` and
+`make acceptance` pass in a clean checkout. It is intentionally read-only
+toward MP4 files. Sidecar corrections are the only permitted media-tree
+writes.
 
 Do not paste configuration files, environment dumps, OpenAI responses, API
 keys, full personal paths, or media filenames into an acceptance report.
@@ -178,5 +179,5 @@ Copy this table into release notes and fill it with aggregate values:
 | Playback / seeking / no-JS / HTTP 206 | Pending |
 | OpenAI-off / Tenrai-off / both-off | Pending |
 
-Only mark Step 8 done after every row is recorded and no acceptance item is
-outstanding.
+Release acceptance is complete only after every row is recorded and no item
+is outstanding.

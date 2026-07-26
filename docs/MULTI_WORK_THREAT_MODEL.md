@@ -1,9 +1,9 @@
 # Multi-work mapping threat model
 
 This note supplements [`SECURITY.md`](SECURITY.md) for the feature contract in
-[`PLAN.md`](../PLAN.md). Media remains trusted personal content operationally,
-but filenames, sidecars, provider data, and model output are treated as
-untrusted inputs.
+the [multi-work ADR](adr/0008-multi-work-collections.md). Media remains trusted
+personal content operationally, but filenames, sidecars, provider data, and
+model output are treated as untrusted inputs.
 
 ## Assets and trust boundaries
 

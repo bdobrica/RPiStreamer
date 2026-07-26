@@ -15,9 +15,9 @@ Never add personal media, API keys, generated state, or remote response dumps.
 Open a focused change with tests and update `README.md` and `CHANGELOG.md` when
 behavior changes. Add or supersede an
 [architecture decision record](docs/adr/README.md) when a durable design
-choice changes. When working on the active multi-work mapping feature, update
-its [implementation plan](PLAN.md) with completion evidence. Commit messages
-use an imperative `type: summary` form such as
+choice changes. For multi-work mapping changes, update the relevant ADR and
+changelog with durable decisions. Commit messages use an imperative
+`type: summary` form such as
 `fix: preserve published site after failure`.
 
 Before proposing a release, complete

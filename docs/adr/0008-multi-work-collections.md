@@ -130,6 +130,15 @@ related records without an artwork row are backfilled from the stored provider
 payload on a metadata-enabled scan. Artwork remains optional and a download
 failure never blocks association, mapping, generation, or playback.
 
+Operators can inspect one exact collection through deterministic, bounded JSON
+without exposing raw sidecars, cache digests, prompts, responses, or secrets.
+Sidecar validation is read-only. Candidate refresh, model-only invalidation,
+and deterministic recomputation share the service instance lock and affect
+only the selected collection. Ordinary `SIGHUP` rescans retain valid provider
+and model caches and do not bypass the configured inference budget. Scan logs
+contain aggregate mapping and external-call counters rather than uncontrolled
+filename lists.
+
 The offline acceptance boundary runs both reported layout classes together:
 37 continuously numbered files across three works and 37 reset-numbered files
 across two works. It exercises pinned provider fixtures, verified candidates,
@@ -138,3 +147,12 @@ cache-only rescans, rename identity, and removal reconciliation. Hardware
 playback, seeking, byte ranges, resource measurements, and real provider/model
 call counts remain host acceptance evidence and are recorded with the
 sanitized runbook rather than inferred from unit tests.
+
+Acceptance requires manual exact and range corrections to win on the next
+scan, uncertain files to remain visible and playable, existing single-title
+URLs to remain stable, and cached/manual operation to survive Tenrai or OpenAI
+being disabled independently. The automated suite also preserves schema-5
+upgrade/rollback, malformed-sidecar, partial-provider, model-failure, atomic
+generation, native/Compose configuration, and Nginx range boundaries. The
+[host acceptance runbook](../MULTI_WORK_ACCEPTANCE.md) is the authoritative
+place for measured Raspberry Pi evidence.
