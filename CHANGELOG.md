@@ -24,6 +24,11 @@ All notable changes are documented here. This project follows
   bounded per-collection inspection, validation, refresh, invalidation, and
   recomputation controls.
 - Sanitized aggregate mapping counters for native and container scan logs.
+- Sanitized per-scan provider-attempt and OpenAI-request counters for cold and
+  cached acceptance measurements.
+- Hermetic two-layout multi-work acceptance covering 74 synthetic files,
+  cached rescans, rename/removal reconciliation, grouped provider context, and
+  complete no-JavaScript playback links.
 
 ### Security
 

@@ -15,7 +15,8 @@ transcode video, manage users, or expose a public internet service.
 > Compose implementation is available. Release acceptance on Raspberry Pi
 > arm64 and amd64 Linux remains before the first stable tag. Architectural
 > choices are recorded in [docs/adr](docs/adr/README.md). The active
-> multi-work folder mapping design is tracked in [PLAN.md](PLAN.md).
+> multi-work folder mapping acceptance is tracked in [PLAN.md](PLAN.md), with
+> a sanitized [Raspberry Pi runbook](docs/MULTI_WORK_ACCEPTANCE.md).
 
 ## Goals
 
@@ -189,6 +190,11 @@ failures enter a short cooldown rather than consuming another call
 immediately. The existing per-scan call budget is shared by all inference
 jobs. Oversized collections are handled in deterministic 50-file batches with
 at most one new mapping call per collection per scan.
+
+Each scan logs one sanitized `event=external_calls` aggregate with provider
+HTTP attempts (including retries) and OpenAI request counts. It contains no
+paths, prompts, responses, filenames, or credentials and makes cold/cached
+host acceptance measurable.
 
 Filename-derived episode hints remain separate and take precedence; a model
 hint is displayed only at confidence `0.8` or higher. Multi-work mappings

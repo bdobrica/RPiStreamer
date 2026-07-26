@@ -32,7 +32,14 @@ check:
 	"$(PYTHON)" -m pytest
 
 acceptance:
-	"$(PYTHON)" -m pytest tests/test_end_to_end.py tests/test_nginx.py
+	"$(PYTHON)" -m pytest \
+		tests/test_end_to_end.py \
+		tests/test_multi_work_end_to_end.py \
+		tests/test_multi_work_database.py \
+		tests/test_nginx.py \
+		tests/test_nginx_render.py \
+		tests/test_deployment.py \
+		tests/test_container.py
 
 install: build
 	set -eu

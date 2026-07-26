@@ -220,6 +220,10 @@ class ServiceTestCase(unittest.TestCase):
 
         message = "\n".join(captured.output)
         self.assertIn("event=mapping_stats", message)
+        self.assertIn(
+            "event=external_calls scan_id=1 provider_requests=0 openai_requests=0",
+            message,
+        )
         self.assertIn("suspected=0", message)
         self.assertIn("unmapped=0", message)
         self.assertNotIn("api_key", message)

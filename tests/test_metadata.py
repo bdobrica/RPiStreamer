@@ -149,6 +149,7 @@ class JikanProviderTests(unittest.TestCase):
         self.assertEqual(details.validators.etag, '"detail"')
         self.assertIn("RPi-Streamer", transport.requests[0].headers["User-Agent"])
         self.assertEqual(transport.requests[0].timeout, 10.0)
+        self.assertEqual(provider.request_count, 2)
 
     def test_episodes_follow_pagination(self) -> None:
         transport = QueueTransport(

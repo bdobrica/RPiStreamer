@@ -64,6 +64,7 @@ def run_once(settings: Settings) -> RunSummary:
     with CatalogueRepository(settings.database_path) as repository:
         enrich = None
         verify_work = None
+        provider: object | None = None
         inference = (
             OpenAIInferenceClient(
                 settings.openai_api_key or "",
@@ -137,6 +138,12 @@ def run_once(settings: Settings) -> RunSummary:
             "unmapped=%d conflicts=%d provider_failures=%d model_failures=%d",
             result.id,
             *metrics,
+        )
+        LOGGER.info(
+            "event=external_calls scan_id=%d provider_requests=%d openai_requests=%d",
+            result.id,
+            int(getattr(provider, "request_count", 0)),
+            0 if inference is None else inference.calls,
         )
         generated = generate_site(
             repository,

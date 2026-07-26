@@ -123,3 +123,12 @@ work and cached provider episode title are updated next to the sole video
 player. Direct, grouped `<noscript>` links keep every file playable without
 JavaScript, while compact cards and per-work episode tables expose the
 additional cached metadata.
+
+The offline acceptance boundary runs both reported layout classes together:
+37 continuously numbered files across three works and 37 reset-numbered files
+across two works. It exercises pinned provider fixtures, verified candidates,
+manual mapping, SQLite persistence, grouped and no-JavaScript generation,
+cache-only rescans, rename identity, and removal reconciliation. Hardware
+playback, seeking, byte ranges, resource measurements, and real provider/model
+call counts remain host acceptance evidence and are recorded with the
+sanitized runbook rather than inferred from unit tests.

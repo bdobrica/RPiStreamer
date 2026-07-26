@@ -181,6 +181,7 @@ class MalMetadataProvider:
         self._sleep = sleep
         self._clock = clock
         self._last_request_at: float | None = None
+        self.request_count = 0
 
     def search(self, title: str) -> Sequence[AnimeCandidate]:
         query = urllib.parse.urlencode({"q": title, "limit": 10, "sfw": "true"})
@@ -319,6 +320,7 @@ class MalMetadataProvider:
         for attempt in range(self.max_attempts):
             self._throttle()
             try:
+                self.request_count += 1
                 response = self._transport(
                     HttpRequest(url, request_headers, self.timeout, max_bytes)
                 )

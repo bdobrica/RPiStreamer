@@ -93,6 +93,7 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn("MEDIA_ROOT ?= /mnt/anime", text)
         for target in (
             "help:",
+            "acceptance:",
             "install:",
             "update:",
             "backup:",
@@ -100,6 +101,7 @@ class NativeDeploymentTests(unittest.TestCase):
             "uninstall:",
         ):
             self.assertIn(target, text)
+        self.assertIn("tests/test_multi_work_end_to_end.py", text)
 
     @unittest.skipUnless(
         shutil.which("systemd-analyze"), "systemd-analyze is not installed"

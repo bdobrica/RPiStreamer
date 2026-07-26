@@ -24,7 +24,7 @@ Status values are **Pending**, **In progress**, **Blocked**, and **Done**.
 | 5 | Structured LLM-assisted mapping | Done | Separate strict schema, verified-ID enum, validation/precedence, stable cache/cooldown, shared budget, and 158 tests pass |
 | 6 | Grouped catalogue rendering | Done | Native work groups, one cross-group player, work cards/context, unmapped and no-JS playback, and 160 tests pass |
 | 7 | Operator controls, observability, and documentation | Done | Five bounded collection controls, sanitized mapping counters, complete operator guidance, and 166 tests pass |
-| 8 | End-to-end and Raspberry Pi acceptance | Pending | Upgrade, cold/cached scans, manual correction, playback, and resource evidence pass |
+| 8 | End-to-end and Raspberry Pi acceptance | In progress | Hermetic 74-file dual-layout pipeline and 167 tests pass; schema-5 rollback/upgrade and failure boundaries are covered; Pi playback/resource evidence remains |
 
 ## Goals
 
@@ -699,7 +699,17 @@ and safe MAL ID replacement.
 
 ## Step 8 — End-to-end and Raspberry Pi acceptance
 
-**Status: Pending**
+**Status: In progress**
+
+Automated evidence: the hermetic dual-layout acceptance test runs 74 synthetic
+files through discovery, real sidecar parsing, offline Tenrai-compatible
+fixtures, verified work association, manual mapping, SQLite persistence,
+grouped/no-JS generation, a provider-free cached rescan, rename identity, and
+removal reconciliation. Existing focused tests cover schema-5 migration and
+rollback, malformed sidecars, provider/model failure modes, atomic generation,
+service interruption, native/Compose configuration, and Nginx byte ranges.
+The sanitized Raspberry Pi procedure and evidence table live in
+`docs/MULTI_WORK_ACCEPTANCE.md`; hardware-only results are not yet recorded.
 
 - Run the complete offline pipeline for both supplied layouts:
   discovery, sidecar parsing, migration, provider fixtures, candidate graph,

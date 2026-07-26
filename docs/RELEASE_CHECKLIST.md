@@ -13,6 +13,8 @@
 Repeat this section on one Raspberry Pi OS Bookworm arm64 host and one Debian
 12/Ubuntu 24.04 amd64 host. Record host model, OS, Python, Nginx, install mode,
 collection size, elapsed scan time, and peak RSS in the release notes.
+Use the sanitized [multi-work host runbook](MULTI_WORK_ACCEPTANCE.md) for the
+two supplied collection layouts and mapping-specific evidence.
 
 - [ ] Install from the release wheel with the documented native procedure.
 - [ ] `make validate` succeeds.
@@ -24,6 +26,8 @@ collection size, elapsed scan time, and peak RSS in the release notes.
       published catalogue.
 - [ ] Backup/restore exercise below succeeds.
 - [ ] Representative scan stays within the recorded performance budget.
+- [ ] MF Ghost and Tsukimichi satisfy every multi-work acceptance criterion.
+- [ ] OpenAI-off, Tenrai-off, and fully offline rescans retain playable output.
 
 ## Disaster recovery exercise
 
