@@ -124,6 +124,12 @@ player. Direct, grouped `<noscript>` links keep every file playable without
 JavaScript, while compact cards and per-work episode tables expose the
 additional cached metadata.
 
+Related works reuse the primary metadata path's bounded artwork policy.
+Newly verified works cache their cover immediately; previously normalized
+related records without an artwork row are backfilled from the stored provider
+payload on a metadata-enabled scan. Artwork remains optional and a download
+failure never blocks association, mapping, generation, or playback.
+
 The offline acceptance boundary runs both reported layout classes together:
 37 continuously numbered files across three works and 37 reset-numbered files
 across two works. It exercises pinned provider fixtures, verified candidates,

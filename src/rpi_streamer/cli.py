@@ -221,6 +221,8 @@ def _work_verifier(settings: Settings) -> WorkVerifier | None:
                     provider_id,
                     metadata_language=settings.metadata_language,
                     now=verified_at,
+                    state_dir=settings.state_dir,
+                    download_artwork=settings.download_artwork,
                 ),
                 None,
             )

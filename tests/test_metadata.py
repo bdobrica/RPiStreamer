@@ -28,6 +28,7 @@ from rpi_streamer.metadata import (
     enrich_catalogue,
     match_candidate,
     normalize_title,
+    verify_provider_work,
 )
 
 NOW = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
@@ -716,6 +717,70 @@ class EnrichmentTests(unittest.TestCase):
         self.assertIsNotNone(artwork)
         assert artwork is not None
         self.assertIsNone(artwork.relative_path)
+
+    def test_new_related_work_verification_downloads_cover(self) -> None:
+        provider = FakeProvider()
+
+        record = verify_provider_work(
+            self.repository,
+            provider,
+            "1",
+            metadata_language="en",
+            now=NOW,
+            state_dir=self.root,
+            download_artwork=True,
+        )
+
+        artwork = self.repository.get_artwork(record.id, "cover")
+        assert artwork is not None
+        self.assertEqual(artwork.relative_path, "artwork/jikan-1.jpg")
+        self.assertEqual(provider.artwork_calls, ["https://images.invalid/1.jpg"])
+        self.assertEqual((self.root / "artwork" / "jikan-1.jpg").read_bytes(), b"jpg")
+
+    def test_cached_related_work_cover_is_backfilled_on_next_scan(self) -> None:
+        entry_id = self._entry()
+        self.repository.upsert_provider_record(
+            library_entry_id=entry_id,
+            provider="jikan",
+            provider_id="1",
+            canonical_title="Cowboy Bebop",
+            raw_data={"mal_id": 1},
+            fetched_at=NOW,
+        )
+        related = self.repository.upsert_detached_provider_record(
+            provider="jikan",
+            provider_id="5",
+            canonical_title="Cowboy Bebop: The Movie",
+            raw_data={
+                "mal_id": 5,
+                "images": {"jpg": {"large_image_url": "https://images.invalid/5.jpg"}},
+            },
+            fetched_at=NOW,
+            validator_source="jikan",
+        )
+        self.repository.associate_library_entry_work(
+            library_entry_id=entry_id,
+            provider_record_id=related.id,
+            local_name="movie",
+            source="relation",
+            verified_at=NOW,
+            relation_distance=1,
+        )
+        provider = FakeProvider()
+
+        result = enrich_catalogue(
+            self.repository,
+            provider,
+            refresh_interval=86400,
+            state_dir=self.root,
+            download_artwork=True,
+            now=NOW,
+        )
+
+        self.assertEqual(result.cached, 1)
+        self.assertEqual(result.errors, ())
+        self.assertIsNotNone(self.repository.get_artwork(related.id, "cover"))
+        self.assertEqual(provider.artwork_calls, ["https://images.invalid/5.jpg"])
 
 
 @unittest.skipUnless(

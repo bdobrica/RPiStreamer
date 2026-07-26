@@ -588,6 +588,10 @@ def enrich_catalogue(
             enriched += 1
         except (ProviderError, ValueError, OSError, sqlite3.Error) as error:
             errors.append(f"{entry.relative_path}: {error}")
+    if download_artwork:
+        errors.extend(
+            _backfill_related_artwork(repository, provider, state_dir, timestamp)
+        )
     return EnrichmentResult(enriched, cached, unmatched, disabled, tuple(errors))
 
 
@@ -598,11 +602,15 @@ def verify_provider_work(
     *,
     metadata_language: str,
     now: datetime,
+    state_dir: Path | None = None,
+    download_artwork: bool = False,
 ) -> ProviderRecord:
     """Fetch and cache one manually declared provider work without ownership."""
 
     cached = repository.get_provider_record_by_provider_id(provider.name, provider_id)
     if cached is not None:
+        if download_artwork and state_dir is not None:
+            _cache_record_artwork_nonfatal(repository, provider, cached, state_dir, now)
         return cached
     result = provider.details(provider_id)
     if result.not_modified or result.details is None:
@@ -628,6 +636,18 @@ def verify_provider_work(
         repository.replace_genres(record.id, details.genres)
         repository.replace_relations(record.id, details.relations)
         repository.replace_provider_episodes(record.id, episodes)
+    if download_artwork and state_dir is not None and details.artwork_url:
+        try:
+            _cache_record_artwork(
+                repository,
+                provider,
+                record,
+                details.artwork_url,
+                state_dir,
+                now,
+            )
+        except (ProviderError, OSError):
+            _record_missing_artwork_for_record(repository, record, details.artwork_url)
     return record
 
 
@@ -902,22 +922,102 @@ def _cache_artwork(
     timestamp: datetime,
 ) -> None:
     assert details.artwork_url is not None
-    extension = _artwork_extension(details.artwork_url)
-    relative = f"artwork/{provider.name}-{details.provider_id}{extension}"
-    destination = state_dir / relative
-    mime_type, size = provider.artwork(details.artwork_url, destination)
     record = repository.get_provider_record(entry.id, provider.name)
     if record is None:
         raise ProviderError("metadata disappeared before artwork was stored")
+    _cache_record_artwork(
+        repository,
+        provider,
+        record,
+        details.artwork_url,
+        state_dir,
+        timestamp,
+    )
+
+
+def _cache_record_artwork(
+    repository: CatalogueRepository,
+    provider: AnimeProvider,
+    record: ProviderRecord,
+    source_url: str,
+    state_dir: Path,
+    timestamp: datetime,
+) -> None:
+    """Download and persist one normalized provider record's cover."""
+
+    extension = _artwork_extension(source_url)
+    relative = f"artwork/{provider.name}-{record.provider_id}{extension}"
+    destination = state_dir / relative
+    mime_type, size = provider.artwork(source_url, destination)
     repository.upsert_artwork(
         provider_record_id=record.id,
         kind="cover",
-        source_url=details.artwork_url,
+        source_url=source_url,
         relative_path=relative,
         mime_type=mime_type,
         size_bytes=size,
         fetched_at=timestamp,
     )
+
+
+def _cache_record_artwork_nonfatal(
+    repository: CatalogueRepository,
+    provider: AnimeProvider,
+    record: ProviderRecord,
+    state_dir: Path,
+    timestamp: datetime,
+) -> str | None:
+    """Backfill a cached record's cover without affecting metadata availability."""
+
+    if repository.get_artwork(record.id, "cover") is not None:
+        return None
+    try:
+        raw: object = json.loads(record.raw_json)
+        source_url = (
+            _artwork_url(raw.get("images")) if isinstance(raw, Mapping) else None
+        )
+    except (json.JSONDecodeError, ProviderError, ValueError):
+        return None
+    if source_url is None:
+        return None
+    try:
+        _cache_record_artwork(
+            repository, provider, record, source_url, state_dir, timestamp
+        )
+    except (ProviderError, OSError) as error:
+        _record_missing_artwork_for_record(repository, record, source_url)
+        return str(error)
+    return None
+
+
+def _backfill_related_artwork(
+    repository: CatalogueRepository,
+    provider: AnimeProvider,
+    state_dir: Path,
+    timestamp: datetime,
+) -> tuple[str, ...]:
+    """Cache covers for previously verified related works."""
+
+    errors: list[str] = []
+    seen: set[int] = set()
+    for entry in repository.list_library_entries():
+        for work in repository.list_library_entry_works(entry.id):
+            if work.is_primary:
+                continue
+            record = repository.get_provider_record_for_work(work.id)
+            if record is None or record.id in seen:
+                continue
+            seen.add(record.id)
+            error = _cache_record_artwork_nonfatal(
+                repository, provider, record, state_dir, timestamp
+            )
+            if error is not None:
+                errors.append(
+                    f"{entry.relative_path}: related artwork "
+                    f"{record.provider_id}: {error}"
+                )
+
+    return tuple(errors)
 
 
 def _record_missing_artwork(
@@ -929,10 +1029,16 @@ def _record_missing_artwork(
     record = repository.get_provider_record(entry.id, provider_name)
     if record is None:
         return
+    _record_missing_artwork_for_record(repository, record, source_url)
+
+
+def _record_missing_artwork_for_record(
+    repository: CatalogueRepository,
+    record: ProviderRecord,
+    source_url: str,
+) -> None:
     repository.upsert_artwork(
-        provider_record_id=record.id,
-        kind="cover",
-        source_url=source_url,
+        provider_record_id=record.id, kind="cover", source_url=source_url
     )
 
 

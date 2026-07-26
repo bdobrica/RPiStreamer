@@ -128,7 +128,9 @@ They are atomically cached under `state_dir/artwork`; a failed download stores
 a missing-art marker for the renderer's future placeholder. Provider,
 payload, and artwork errors are isolated per title and included in the scan's
 `partial` summary. Previously cached metadata and all local media remain
-available.
+available. Verified related works use the same cover safeguards. Related
+records cached by an older release are backfilled from their stored provider
+payload during the next metadata-enabled scan.
 
 ## Expected library layout
 

@@ -30,6 +30,11 @@ All notable changes are documented here. This project follows
   cached rescans, rename/removal reconciliation, grouped provider context, and
   complete no-JavaScript playback links.
 
+### Fixed
+
+- Download and render covers for newly verified related works, and backfill
+  missing related-work covers from existing normalized metadata caches.
+
 ### Security
 
 - Media is mounted read-only to the indexer and containers.

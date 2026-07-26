@@ -110,6 +110,8 @@ def run_once(settings: Settings) -> RunSummary:
                             provider_id,
                             metadata_language=settings.metadata_language,
                             now=scanned_at,
+                            state_dir=settings.state_dir,
+                            download_artwork=settings.download_artwork,
                         ),
                         None,
                     )
