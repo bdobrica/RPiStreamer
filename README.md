@@ -431,6 +431,85 @@ journalctl -u rpi-streamer --since "10 minutes ago" \
   --grep 'event=(mapping_stats|scan_issues|scan_finished)' --no-pager
 ```
 
+### Troubleshooting partial multi-work scans
+
+A `partial` scan does not necessarily mean that media or generated pages are
+broken. Mapping deliberately treats uncertain classifications as bounded scan
+issues while keeping every MP4 visible and playable. Compare the final
+`mapping_stats` line with `scan_issues`; for example:
+
+```text
+errors=198 ambiguous=183 model_failures=15 provider_failures=0
+```
+
+Here all 198 errors are accounted for by 183 deterministic ambiguities and 15
+model failures. `provider_failures=0` confirms that metadata retrieval was not
+the cause. A common ambiguity is `duplicate episode numbering`: several
+seasons in one folder restart at episode 1, but their basenames do not provide
+enough unique evidence for the conservative deterministic mapper to choose a
+verified work.
+
+Inspect one collection before changing it:
+
+```bash
+rpi-streamer --config /etc/rpi-streamer/rpi-streamer.ini \
+  mapping inspect "Baka to Test to Shoukanjuu"
+```
+
+In that JSON, `outcome` and `source` describe the active persisted mapping.
+`deterministic_outcome` and `deterministic_reason` are a separate,
+non-mutating heuristic preview. A file can therefore be actively
+model-mapped while the deterministic preview still reports an ambiguity.
+
+There are three safe ways to resolve remaining collections:
+
+1. Send another `SIGHUP` after the current scan finishes and any transient
+   failure cooldown has expired. Successful model mappings are cached, so
+   later scans can progress to unresolved collections without paying again
+   for completed work:
+
+   ```bash
+   sudo systemctl reload rpi-streamer
+   ```
+
+2. Temporarily raise `openai_max_calls_per_scan` if the log shows the configured
+   model-call budget was exhausted. Validate the configuration, reload, and
+   restore the lower value afterward if stricter cost control is preferred:
+
+   ```ini
+   [rpi-streamer]
+   openai_max_calls_per_scan = 10
+   ```
+
+3. Add explicit `[work "..."]` rules using MAL IDs already verified in
+   `mapping inspect`. Match stable season-specific basename text and avoid
+   copying placeholder IDs:
+
+   ```ini
+   [rpi-streamer]
+   mal_id = PRIMARY_MAL_ID
+   related_mal_ids = SECOND_SEASON_MAL_ID
+
+   [work "season-1"]
+   mal_id = PRIMARY_MAL_ID
+   files =
+       *Base_Title_-_*
+
+   [work "season-2"]
+   mal_id = SECOND_SEASON_MAL_ID
+   files =
+       *Base_Title_Second_Season_-_*
+   ```
+
+   Run `mapping validate-sidecar` before the next scan. Manual rules take
+   precedence over deterministic and model mappings.
+
+The `unmapped` counter is broader than the error count: it includes playable
+files without a work association and does not by itself indicate a failed
+scan. Conversely, model failures are non-fatal and may simply mean the
+per-scan budget was reached, OpenAI was disabled, or a cached cooldown is
+active.
+
 To find a real MAL ID, locate the exact anime on MyAnimeList and copy only the
 positive integer after `/anime/` in its canonical URL; for example,
 `https://myanimelist.net/anime/50695/MF_Ghost` yields `50695`. Confirm the
